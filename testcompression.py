@@ -363,7 +363,21 @@ class PCcompression:
 path = "./data_input/0001_point_cloud.ply"
 
 if __name__ == "__main__":
-    pcc = PCcompression(4096, 2048,50,True,True)
+    pcc = PCcompression(4096, 4,1,False,False)
+    pcc.pc2mp3(path)
+    pcc = PCcompression(4096, 4,2,False,False)
+    pcc.pc2mp3(path)
+    pcc = PCcompression(4096, 4,3,False,False)
+    pcc.pc2mp3(path)
+    pcc = PCcompression(4096, 4,5,False,False)
+    pcc.pc2mp3(path)
+    pcc = PCcompression(4096, 4,10,False,False)
+    pcc.pc2mp3(path)
+    pcc = PCcompression(4096, 4,20,False,False)
+    pcc.pc2mp3(path)
+    pcc = PCcompression(4096, 2048,10,False,False)
+    pcc.pc2mp3(path)
+    pcc = PCcompression(4096, 2048,100,False,False)
     pcc.pc2mp3(path)
     box_sizes = [128,256,512,1024]
     frame_sizes = [4,8,16,32,64,128, 256, 512,1024,2048]
