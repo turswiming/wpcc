@@ -375,7 +375,7 @@ if __name__ == "__main__":
     pcc.pc2mp3(path)
     pcc = PCcompression(4096, 4,20,False,False)
     pcc.pc2mp3(path)
-    pcc = PCcompression(4096, 2048,10,False,False)
+    pcc = PCcompression(4096, 2048,50,False,False)
     pcc.pc2mp3(path)
     pcc = PCcompression(4096, 2048,100,False,False)
     pcc.pc2mp3(path)
