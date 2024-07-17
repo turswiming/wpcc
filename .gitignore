@@ -1,0 +1,10 @@
+/pc
+! pc\0001_point_cloud.ply
+
+/datafromld
+/venv
+
+00-36*.las
+
+psnrs.npy
+ratios.npy
