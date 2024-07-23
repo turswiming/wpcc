@@ -24,18 +24,20 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import math
 from pydub import AudioSegment
+import getScaleParameter as gsp
 x_real_original_global = np.array([])
 x_imag_original_global = np.array([])
 class PCcompression:
-    def __init__(self,box_size,frame_size,compression_value,edge_size =16,visualize = False, use8bit =False) -> None:
-        self.box_size = box_size
+    def __init__(self,frame_size,compression_value,ununiformlevel =3,visualize = False, use8bit =False) -> None:
         self.frame_size = frame_size
         self.compression_value = compression_value
-        if edge_size *2 >=frame_size:
-            raise ValueError("edge_size should be smaller than frame_size/2")
-        self.edge_size = edge_size
+        # if edge_size *2 >=frame_size:
+        #     raise ValueError("edge_size should be smaller than frame_size/2")
+        # self.edge_size = edge_size
+        self.ununiformlevel = ununiformlevel
         self.visualize = visualize
         self.use8bit = use8bit
+        self.tiny = 10000
         pass
 
     def savefft(self,path,fft_frames):
@@ -53,6 +55,63 @@ class PCcompression:
                 max[int(i / width), int(j / height)] = np.max(image[i:i + width, j:j + height])
         return min, max
 
+    def sintransform(self,image, level):
+        if level == 0:
+            return image
+        else:
+            image = np.sin(image*3.1415926/2)
+            return self.sintransform(image, level-1)
+            
+    def arcsintransform(self,image, level):
+        if level == 0:
+            return image
+        else:
+            image = np.arcsin(image)/(3.1415926/2)
+            return self.arcsintransform(image, level-1)
+    
+    def arctantransform(self,image, level):
+        if level == 0:
+            return image
+        else:
+            image = np.arctan(image/(3.1415926/2))
+            return self.arctantransform(image, level-1)
+    def tantransform(self,image, level):
+        if level == 0:
+            return image
+        else:
+            image = np.tan(image)* 3.1415926 / 2
+            return self.tantransform(image, level-1)
+    
+    def UnuniQuantize(self, image:np.array,level:float):
+        return self.arcsintransform(image, level)
+        return self.arctantransform(image, level)
+        return np.arctan(image*level)*2/3.1415926
+        return self.sintransform(image, level)
+        pass
+        
+    def unpackUnuniQuantize(self, image:np.array,level:float):
+        return self.sintransform(image, level)
+        return self.tantransform(image, level)
+        return np.tan((image)*3.1415926/2)/level
+        return self.arcsintransform(image, level)
+        pass
+    
+    def addnoise(self,image:np.array, level:float):
+
+        # 阈值
+        threshold = 0.001
+
+        # 找到小于阈值的点
+        mask = (image > -threshold) & (image < threshold)
+
+        # 为这些点生成正态分布随机噪声
+        image_scaled = image * (1/level)
+        image_floored = np.floor(image_scaled)
+        image_floored = image_floored/(1/level)
+        image[mask] = image_floored[mask]
+        return image
+
+    
     def saveonechannel(self,value, prefix,channel_name) ->np.array:
         #1.1 cliping
         x_frames = []
@@ -79,64 +138,31 @@ class PCcompression:
         if channel_name == "x":
             global x_real_original_global
             global x_imag_original_global
+
             x_real_original_global = real
             x_imag_original_global = imag
-
-        real_edge = np.zeros((x_fft_frames_array.shape[0], self.edge_size*2))
-        imag_edge = np.zeros((x_fft_frames_array.shape[0], self.edge_size*2))
-        for i in range(x_fft_frames_array.shape[0]):
-            real_edge[i] = np.concatenate((real[i][:self.edge_size], real[i][-self.edge_size:]))
-            imag_edge[i] = np.concatenate((imag[i][:self.edge_size], imag[i][-self.edge_size:]))
-        real_edge_max = np.max(real_edge)
-        real_edge_min = np.min(real_edge)
-        imag_edge_max = np.max(imag_edge)
-        imag_edge_min = np.min(imag_edge)
-        real_edge = (real_edge-real_edge_min)/(real_edge_max-real_edge_min)
-        imag_edge = (imag_edge-imag_edge_min)/(imag_edge_max-imag_edge_min)
-        if self.use8bit:
-            real_edge = (real_edge*255)
-            imag_edge = (imag_edge*255)
-        else:
-            real_edge = (real_edge*65535)
-            imag_edge = (imag_edge*65535)    
-        if self.use8bit:
-            real_edge = real_edge.astype(np.uint8)
-            imag_edge = imag_edge.astype(np.uint8)
-        else:
-            real_edge = real_edge.astype(np.uint16)
-            imag_edge = imag_edge.astype(np.uint16)
-        real_edge_pil_img = Image.fromarray(real_edge)
-        imag_edge_pil_img = Image.fromarray(imag_edge)
-        real_edge_pil_img.save(
-            "data_output/{}_saveimg/{}_fft_frames_edge_real.png".format(prefix, channel_name),
-            format="png",
-        )
-        imag_edge_pil_img.save(
-            "data_output/{}_saveimg/{}_fft_frames_edge_imag.png".format(prefix, channel_name),
-            format="png",
-        )
-        
-        #2.2 store edge values
-        real = real[:,self.edge_size:-self.edge_size]
-        imag = imag[:,self.edge_size:-self.edge_size]
-        real_max = np.max(real)
-        real_min = np.min(real)
-        imag_max = np.max(imag)
-        imag_min = np.min(imag)
-        real = (real-np.min(real))/(np.max(real)-np.min(real))
-        imag = (imag-np.min(imag))/(np.max(imag)-np.min(imag))
-        # real = pow(real, 0.5)
-        # imag = pow(imag, 0.5)
+        real_max = np.max(real,axis=0)
+        real_min = np.min(real,axis=0)
+        # gsp.getScaleParameter(real_max, gsp.Center.Center, gsp.Goal.Upper)
+        # gsp.getScaleParameter(real_min, gsp.Center.Center, gsp.Goal.Lower)
+        real_max = np.max(real)+self.tiny
+        real_min = np.min(real)-self.tiny
+        imag_max = np.max(imag)+self.tiny
+        imag_min = np.min(imag)-self.tiny
+        real = real/max(abs(real_max),abs(real_min))
+        imag = imag/max(abs(imag_max),abs(imag_min))
+        real = self.UnuniQuantize(real, self.ununiformlevel)
+        imag = self.UnuniQuantize(imag, self.ununiformlevel)
+        real = self.addnoise(real, 0.001)
+        imag = self.addnoise(imag, 0.001)
+        real = (real + 1)/2
+        imag = (imag + 1)/2
         if self.use8bit:
             real_image = (real*255)
             imag_image = (imag*255)
         else:
             real_image = (real*65535)
             imag_image = (imag*65535)
-
-
-        
-    
         if self.use8bit:
             real_image = real_image.astype(np.uint8)
             imag_image = imag_image.astype(np.uint8)
@@ -144,26 +170,32 @@ class PCcompression:
             real_image = real_image.astype(np.uint16)
             imag_image = imag_image.astype(np.uint16)
             
-        if channel_name == "x":
-            max_values = np.max(imag_image, axis=0)
-            min_values = np.min(imag_image, axis=0)
-            mean_values = np.mean(imag_image, axis=0)  # 计算平均值
+        # if channel_name == "x":
+        #     max_values = np.max(imag_image, axis=0)
+        #     min_values = np.min(imag_image, axis=0)
+        #     mean_values = np.mean(imag_image, axis=0)  # 计算平均值
 
-            columns = np.arange(imag_image.shape[1])
-            plt.figure(figsize=(10, 5))
+        #     columns = np.arange(imag_image.shape[1])
+        #     plt.figure(figsize=(10, 5))
 
-            plt.plot(columns, max_values, label='Max Values', marker='o', linestyle='-', color='r')
-            plt.plot(columns, min_values, label='Min Values', marker='o', linestyle='-', color='b')
-            plt.plot(columns, mean_values, label='Mean Values', marker='x', linestyle='--', color='g')  # 添加平均值
+        #     plt.plot(columns, max_values, label='Max Values', marker='o', linestyle='-', color='r')
+        #     plt.plot(columns, min_values, label='Min Values', marker='o', linestyle='-', color='b')
+        #     plt.plot(columns, mean_values, label='Mean Values', marker='x', linestyle='--', color='g')  # 添加平均值
 
-            plt.title('Max, Min, and Mean Values of Each Column in imag_image')
-            plt.xlabel('Column Index')
-            plt.ylabel('Values')
-            plt.xticks(columns)
-            plt.legend()
+        #     plt.title('Max, Min, and Mean Values of Each Column in imag_image')
+        #     plt.xlabel('Column Index')
+        #     plt.ylabel('Values')
+        #     plt.xticks(columns)
+        #     plt.legend()
 
-            plt.show()
-            plt.close()
+        #     plt.show()
+        #     plt.close()
+            
+        #     plt.hist(imag_image[:,1].flatten(), bins=255, density=True,)
+        #     plt.legend()
+        #     plt.show()
+        #     plt.close()
+            
         
         # 将numpy数组转换为Pillow图像
         real_pil_image = Image.fromarray(real_image)
@@ -173,7 +205,7 @@ class PCcompression:
             "data_output/{}_saveimg/{}_fft_frames_real.jp2".format(prefix, channel_name),
             format="JPEG2000",
             quality_mode="rates",
-            quality_layers=[self.compression_value*2]  # 设置压缩率，较低的值意味着较高的压缩率
+            quality_layers=[self.compression_value]  # 设置压缩率，较低的值意味着较高的压缩率
         )
 
         # 保存imag部分的图像
@@ -181,7 +213,7 @@ class PCcompression:
             "data_output/{}_saveimg/{}_fft_frames_imag.jp2".format(prefix, channel_name),
             format="JPEG2000",
             quality_mode="rates",
-            quality_layers=[self.compression_value*2]  # 设置压缩率
+            quality_layers=[self.compression_value]  # 设置压缩率
         )
         with open("data_output/{}_saveimg/{}_fft_frames.json".format(prefix,channel_name), "w") as f:
             json.dump(
@@ -190,10 +222,6 @@ class PCcompression:
                     "real_min":real_min, 
                     "imag_max":imag_max, 
                     "imag_min":imag_min,
-                    "real_edge_max":real_edge_max,
-                    "real_edge_min":real_edge_min,
-                    "imag_edge_max":imag_edge_max,
-                    "imag_edge_min":imag_edge_min
                     }, 
                 f)
 
@@ -220,28 +248,13 @@ class PCcompression:
         else:
             real_image = ((real_image)/65535)
             imag_image = ((imag_image)/65535)
-        # real_image  =pow(real_image, 1/0.5)
-        # imag_image  =pow(imag_image, 1/0.5)
-        real_image = real_image*(real_max-real_min) + real_min
-        imag_image = imag_image*(imag_max-imag_min) + imag_min
-        real_image_edge = imageio.imread("data_output/{}_saveimg/{}_fft_frames_edge_real.png".format(prefix,channel_name))
-        imag_image_edge = imageio.imread("data_output/{}_saveimg/{}_fft_frames_edge_imag.png".format(prefix,channel_name))
-        real_edge_max = json_data["real_edge_max"]
-        real_edge_min = json_data["real_edge_min"]
-        imag_edge_max = json_data["imag_edge_max"]
-        imag_edge_min = json_data["imag_edge_min"]
-        real_edge = real_image_edge.astype(np.float64)
-        imag_edge = imag_image_edge.astype(np.float64)
-        if self.use8bit:
-            real_edge = ((real_edge)/255)
-            imag_edge = ((imag_edge)/255)
-        else:
-            real_edge = ((real_edge)/65535)
-            imag_edge = ((imag_edge)/65535)
-        real_edge = real_edge*(real_edge_max-real_edge_min) + real_edge_min
-        imag_edge = imag_edge*(imag_edge_max-imag_edge_min) + imag_edge_min
-        real_image = np.concatenate((real_edge[:,:self.edge_size], real_image, real_edge[:,-self.edge_size:]), axis=1)
-        imag_image = np.concatenate((imag_edge[:,:self.edge_size], imag_image, imag_edge[:,-self.edge_size:]), axis=1)        
+        real_image = real_image*2 - 1
+        imag_image = imag_image*2 - 1
+        real_image = self.unpackUnuniQuantize(real_image, self.ununiformlevel)
+        imag_image = self.unpackUnuniQuantize(imag_image, self.ununiformlevel)
+        real_image = real_image*max(abs(real_max),abs(real_min))
+        imag_image = imag_image*max(abs(imag_max),abs(imag_min))
+ 
         if channel_name == "x":
             global x_real_original_global
             global x_imag_original_global
@@ -331,34 +344,18 @@ class PCcompression:
 path = "./data_input/0001_point_cloud.ply"
 
 if __name__ == "__main__":
-    pcc = PCcompression(4096, 512,1,16,True,False)
+    pcc = PCcompression(256,50,0,True,False)
     pcc.pc2mp3(path)
-    pcc = PCcompression(4096, 4,2,False,True)
-    pcc.pc2mp3(path)
-    pcc = PCcompression(4096, 4,3,False,True)
-    pcc.pc2mp3(path)
-    pcc = PCcompression(4096, 4,5,False,True)
-    pcc.pc2mp3(path)
-    pcc = PCcompression(4096, 4,10,False,True)
-    pcc.pc2mp3(path)
-    pcc = PCcompression(4096, 8,20,False,True)
-    pcc.pc2mp3(path)
-    pcc = PCcompression(4096, 128,50,True,True)
-    pcc.pc2mp3(path)
-    pcc = PCcompression(4096, 2048,100,False,True)
-    pcc.pc2mp3(path)
-    box_sizes = [128,256,512,1024]
     frame_sizes = [4,8,16,32,64,128, 256, 512,1024,2048]
-    compression_values = [1,2,3,4,5,6,7,8,9,10]
-    ratios = np.zeros((len(frame_sizes), len(compression_values)))
-    psnrs = np.zeros((len(frame_sizes), len(compression_values)))
+    ununis = [0,1,2,3,4,5]
+    ratios = np.zeros((len(frame_sizes), len(ununis)))
+    psnrs = np.zeros((len(frame_sizes), len(ununis)))
     i = 0
     j = 0
     for  frame_size in frame_sizes:
-        for  conpression_value in compression_values:
+        for  ununi in ununis:
 
-            pcc = PCcompression(1024, frame_size,conpression_value)
-            print("frame_size: ", frame_size, "conpression_value: ", conpression_value)
+            pcc = PCcompression(frame_size,10,ununi,False,False)
             ratios[i,j], psnrs[i,j] = pcc.pc2mp3(path)
             print("-----------------")
             j+=1
@@ -366,13 +363,9 @@ if __name__ == "__main__":
         i+=1
     np.save("ratios.npy", ratios)
     np.save("psnrs.npy", psnrs)
-    plt.imshow(ratios)
-    plt.xticks(np.arange(len(compression_values)), labels=compression_values)
-    plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
-
-    plt.show()
-    plt.close()
     plt.imshow(psnrs)
+    plt.xticks(np.arange(len(ununis)), labels=ununis)
+    plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     plt.show()
     plt.close()
     print("Done.")
