@@ -25,10 +25,14 @@ import matplotlib.pyplot as plt
 import math
 from pydub import AudioSegment
 import getScaleParameter as gsp
+from sklearn.neighbors import NearestNeighbors
+import numpy as np
 x_real_original_global = np.array([])
 x_imag_original_global = np.array([])
 class PCcompression:
     def __init__(self,frame_size,compression_value,ununiformlevel =3,visualize = False, use8bit =False) -> None:
+        if frame_size % 2 != 0:
+            raise ValueError("frame_size should be even")
         self.frame_size = frame_size
         self.compression_value = compression_value
         # if edge_size *2 >=frame_size:
@@ -38,7 +42,27 @@ class PCcompression:
         self.visualize = visualize
         self.use8bit = use8bit
         self.tiny = 10000
+        self.threshold = 0.005
         pass
+
+        
+
+    def dft(self,x):
+        """
+        Compute the Discrete Fourier Transform (DFT) of an array.
+        
+        Parameters:
+        x (np.array): Input array.
+        
+        Returns:
+        np.array: DFT of the input array.
+        """
+        N = x.shape[0]
+        n = np.arange(N)
+        k = n.reshape((N, 1))
+        e = np.exp(-2j * np.pi * k * n / N)
+        return np.dot(e, x)
+
 
     def savefft(self,path,fft_frames):
         #save fft frames
@@ -96,23 +120,30 @@ class PCcompression:
         return self.arcsintransform(image, level)
         pass
     
-    def addnoise(self,image:np.array, level:float):
-
-        # 阈值
-        threshold = 0.001
-
-        # 找到小于阈值的点
+    def genlowPrecisionPic(self,image:np.array, threshold:float):
+        
         mask = (image > -threshold) & (image < threshold)
+        print("mask: ", mask[mask == True].shape)
+        print("mask: ", mask[mask == False].shape)
+        image_clamped = np.clip(image, -threshold, threshold)
+        image_scaled = image_clamped /threshold
+        
+        mask_line = mask.reshape(-1)
+        false_indices = np.where(mask_line == False)[0]
+        return image_scaled, false_indices
 
-        # 为这些点生成正态分布随机噪声
-        image_scaled = image * (1/level)
-        image_floored = np.floor(image_scaled)
-        image_floored = image_floored/(1/level)
-        image[mask] = image_floored[mask]
+    def rebuildHighPrecisionPic(self,lowPrecisionPic:np.array,highPrecisionNumbers:np.array,mask_line:np.array,threshold:float):
+        image = lowPrecisionPic * threshold 
+        for index in range(mask_line.shape[0]):
+            indices = mask_line[index]
+            x = indices//image.shape[1]
+            y = indices%image.shape[1]
+            image[x,y] = highPrecisionNumbers[index]
         return image
-
     
     def saveonechannel(self,value, prefix,channel_name) ->np.array:
+        #downsample
+        # value = value[::2]
         #1.1 cliping
         x_frames = []
         for i in range(0, len(value), self.frame_size):
@@ -122,7 +153,7 @@ class PCcompression:
         x_fft_frames = []
         max_length = 0
         for frame in x_frames:
-            fft_result = fft.fft(frame)
+            fft_result = np.fft.fft(frame)
             if len(fft_result) != self.frame_size:
                 break
             x_fft_frames.append(fft_result)
@@ -135,6 +166,7 @@ class PCcompression:
         for i in range(x_fft_frames_array.shape[0]):
             real[i] = x_fft_frames_array[i].real
             imag[i] = x_fft_frames_array[i].imag
+
         if channel_name == "x":
             global x_real_original_global
             global x_imag_original_global
@@ -143,20 +175,23 @@ class PCcompression:
             x_imag_original_global = imag
         real_max = np.max(real,axis=0)
         real_min = np.min(real,axis=0)
-        # gsp.getScaleParameter(real_max, gsp.Center.Center, gsp.Goal.Upper)
-        # gsp.getScaleParameter(real_min, gsp.Center.Center, gsp.Goal.Lower)
-        real_max = np.max(real)+self.tiny
-        real_min = np.min(real)-self.tiny
-        imag_max = np.max(imag)+self.tiny
-        imag_min = np.min(imag)-self.tiny
+
+        real_max = np.max(real)
+        real_min = np.min(real)
+        imag_max = np.max(imag)
+        imag_min = np.min(imag)
         real = real/max(abs(real_max),abs(real_min))
         imag = imag/max(abs(imag_max),abs(imag_min))
-        real = self.UnuniQuantize(real, self.ununiformlevel)
-        imag = self.UnuniQuantize(imag, self.ununiformlevel)
-        real = self.addnoise(real, 0.001)
-        imag = self.addnoise(imag, 0.001)
+
         real = (real + 1)/2
         imag = (imag + 1)/2
+        
+        # real = real[:,:real.shape[1]//2]
+
+        # diff = real - fliplr_real
+        # plt.imshow(diff)
+        # plt.show()
+        # plt.close()
         if self.use8bit:
             real_image = (real*255)
             imag_image = (imag*255)
@@ -195,8 +230,7 @@ class PCcompression:
         #     plt.legend()
         #     plt.show()
         #     plt.close()
-            
-        
+
         # 将numpy数组转换为Pillow图像
         real_pil_image = Image.fromarray(real_image)
         imag_pil_image = Image.fromarray(imag_image)
@@ -240,18 +274,25 @@ class PCcompression:
         
         real_image = imageio.imread("data_output/{}_saveimg/{}_fft_frames_real.jp2".format(prefix,channel_name))
         imag_image = imageio.imread("data_output/{}_saveimg/{}_fft_frames_imag.jp2".format(prefix,channel_name))
+
+        
+        
         real_image = real_image.astype(np.float64)
         imag_image = imag_image.astype(np.float64)
+
         if self.use8bit:
             real_image = ((real_image)/255)
             imag_image = ((imag_image)/255)
         else:
             real_image = ((real_image)/65535)
             imag_image = ((imag_image)/65535)
+        
+
+            
         real_image = real_image*2 - 1
         imag_image = imag_image*2 - 1
-        real_image = self.unpackUnuniQuantize(real_image, self.ununiformlevel)
-        imag_image = self.unpackUnuniQuantize(imag_image, self.ununiformlevel)
+        # real_image = self.unpackUnuniQuantize(real_image, self.ununiformlevel)
+        # imag_image = self.unpackUnuniQuantize(imag_image, self.ununiformlevel)
         real_image = real_image*max(abs(real_max),abs(real_min))
         imag_image = imag_image*max(abs(imag_max),abs(imag_min))
  
@@ -259,7 +300,7 @@ class PCcompression:
             global x_real_original_global
             global x_imag_original_global
             
-            realdiff = x_real_original_global - real_image
+            realdiff = x_imag_original_global - imag_image
             plt.imshow(realdiff)
             plt.show()
             plt.close()
@@ -274,9 +315,67 @@ class PCcompression:
             original_frame = np.real(original_frame)
             
             x_original_frames.append(original_frame)
+            
+        series = np.concatenate(x_original_frames)
+        
+        return series
+    
+    
+    
+    def calculate_psnr(self,original, compressed):
+        x_value = original[:, 0]
+        y_value = original[:, 1]
+        z_value = original[:, 2]
+        #build point cloud
+        nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(original)
 
-        return np.concatenate(x_original_frames)
-
+        #search nearest point
+        mse = 0
+        distances, indices = nbrs.kneighbors(compressed)
+        mse = np.mean(distances[:, 0])
+            
+        #calculate MSE
+        # mse /= len(x_value)+len(y_value)+len(z_value)
+        x_range = np.max(x_value)-np.min(x_value)
+        y_range = np.max(y_value)-np.min(y_value)
+        z_range = np.max(z_value)-np.min(z_value)
+        max_range = pow(pow(x_range,2)+pow(y_range,2)+pow(z_range,2),0.5)
+        
+        
+        psnr = 10*np.log10(pow(max_range,2)/mse)
+        
+        print("PSNR: ", psnr)
+        
+    def downsample(self,x,y,z):
+        x_down = np.zeros(len(x)//2)
+        x_down = x[::2]
+        y_down = np.zeros(len(y)//2)
+        y_down = y[::2]
+        z_down = np.zeros(len(z)//2)
+        z_down = z[::2]
+        return x_down, y_down, z_down
+    
+    
+    def upsample(self,x,y,z):
+        assert x.shape == y.shape == z.shape
+        x_up = np.zeros(len(x)*2)
+        y_up = np.zeros(len(y)*2)
+        z_up = np.zeros(len(z)*2)
+        x_up[::2] = x
+        y_up[::2] = y
+        z_up[::2] = z
+        for i in range(1,len(x_up)-1,2):
+            if (abs(x_up[i-1]-x_up[i+1])+abs(y_up[i-1]-y_up[i+1])+abs(z_up[i-1]-z_up[i+1])) > 0.01:
+                x_up[i] = x_up[i-1]
+                y_up[i] = y_up[i-1]
+                z_up[i] = z_up[i-1]
+            else:
+                x_up[i] = (x_up[i-1]+x_up[i+1])/2
+                y_up[i] = (y_up[i-1]+y_up[i+1])/2
+                z_up[i] = (z_up[i-1]+z_up[i+1])/2
+        return x_up, y_up, z_up
+    
+    
     def pc2mp3(self,filename):
         prefix = filename.split("/")[-1].split("_")[0]
         pcd = o3d.io.read_point_cloud(filename)
@@ -293,7 +392,7 @@ class PCcompression:
         if not os.path.exists("data_output/{}_saveimg/".format(prefix)):
             os.makedirs("data_output/{}_saveimg/".format(prefix))
         
-        
+        x_value,y_value,z_value = self.downsample(x_value,y_value,z_value)
         #spilct x_value to frames, each frames has frame_size samples
         self.saveonechannel(x_value, prefix, "x")
         self.saveonechannel(y_value, prefix, "y")
@@ -302,7 +401,7 @@ class PCcompression:
         x_readed = self.readonechannel(prefix, "x")
         y_readed = self.readonechannel(prefix, "y")
         z_readed = self.readonechannel(prefix, "z")
-        
+        x_readed,y_readed,z_readed =  self.upsample(x_readed,y_readed,z_readed)
 
 
         pc = np.stack((x_readed, y_readed, z_readed), axis=-1)
@@ -322,21 +421,10 @@ class PCcompression:
         print("compression size: ", compression_size)
         print("compression ratio: ", original_size/compression_size)
         
-        #calculate MSE
-        mse = 0
-        mse += np.sum(np.square(x_value[:x_readed.shape[0]]-x_readed))
-        mse += np.sum(np.square(y_value[:x_readed.shape[0]]-y_readed))
-        mse += np.sum(np.square(z_value[:x_readed.shape[0]]-z_readed))
-        mse /= len(x_value)+len(y_value)+len(z_value)
-        x_range = np.max(x_value)-np.min(x_value)
-        y_range = np.max(y_value)-np.min(y_value)
-        z_range = np.max(z_value)-np.min(z_value)
-        range = pow(pow(x_range,2)+pow(y_range,2)+pow(z_range,2),0.5)
+        origin = np.stack((x_value, y_value, z_value), axis=-1)
+        readed = np.stack((x_readed, y_readed, z_readed), axis=-1)
+        psnr = self.calculate_psnr(origin, readed)
         
-        
-        psnr = 10*np.log10(pow(range,2)/mse)
-        
-        print("PSNR: ", psnr)
         return original_size/compression_size ,psnr
     
 
@@ -344,8 +432,9 @@ class PCcompression:
 path = "./data_input/0001_point_cloud.ply"
 
 if __name__ == "__main__":
-    pcc = PCcompression(256,50,0,True,False)
+    pcc = PCcompression(128,2,0,True,False)
     pcc.pc2mp3(path)
+    
     frame_sizes = [4,8,16,32,64,128, 256, 512,1024,2048]
     ununis = [0,1,2,3,4,5]
     ratios = np.zeros((len(frame_sizes), len(ununis)))
