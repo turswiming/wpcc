@@ -19,6 +19,7 @@ executing==2.0.1
 fastjsonschema==2.20.0
 Flask==3.0.3
 fonttools==4.53.1
+Glymur==0.13.4
 gurobipy==11.0.3
 idna==3.7
 imageio==2.34.2
@@ -36,6 +37,7 @@ jupyter_core==5.7.2
 jupyterlab_widgets==3.0.11
 kiwisolver==1.4.5
 laspy==2.5.4
+lxml==5.2.2
 MarkupSafe==2.1.5
 matplotlib==3.9.1
 matplotlib-inline==0.1.7

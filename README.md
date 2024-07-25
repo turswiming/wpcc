@@ -16,9 +16,12 @@ compression ratio 9.98
 
 
 ## how to init this project
-``` bash  
-pip install -r requirements.txt
-```
+1.
+    ``` bash  
+    pip install -r requirements.txt
+    ```
+1. install ffmpeg
+1. install openjpeg
 ## usage
 
 1. open testcompression.py
