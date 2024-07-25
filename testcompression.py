@@ -13,9 +13,9 @@ usage:
 """
 
 import numpy as np
-import scipy.fftpack as fft
+from scipy.fftpack import dct
+from scipy.fftpack import idct
 import struct
-import zlib
 import open3d as o3d
 import os
 import json
@@ -23,10 +23,10 @@ import imageio.v2 as imageio
 from PIL import Image
 import matplotlib.pyplot as plt
 import math
-from pydub import AudioSegment
 import getScaleParameter as gsp
 from sklearn.neighbors import NearestNeighbors
 import numpy as np
+
 x_real_original_global = np.array([])
 x_imag_original_global = np.array([])
 class PCcompression:
@@ -150,22 +150,22 @@ class PCcompression:
             x_frames.append(value[i:i+self.frame_size])
         #1.2 fft
         #apply fft to each frame
-        x_fft_frames = []
+        x_dct_frames = []
         max_length = 0
         for frame in x_frames:
-            fft_result = np.fft.fft(frame)
-            if len(fft_result) != self.frame_size:
-                break
-            x_fft_frames.append(fft_result)
-            if len(fft_result) > max_length:
-                max_length = len(fft_result)
+            if len(frame) < self.frame_size:
+                continue
+            dct_result = dct(frame, norm='ortho')  # 使用DCT并采用正交归一化
+            x_dct_frames.append(dct_result)
+            if len(dct_result) > max_length:
+                max_length = len(dct_result)
         
-        x_fft_frames_array = np.array(x_fft_frames)
-        real = np.zeros(x_fft_frames_array.shape)
-        imag = np.zeros(x_fft_frames_array.shape)
-        for i in range(x_fft_frames_array.shape[0]):
-            real[i] = x_fft_frames_array[i].real
-            imag[i] = x_fft_frames_array[i].imag
+        x_dct_frames_array = np.array(x_dct_frames)
+        real = np.zeros(x_dct_frames_array.shape)
+        imag = np.zeros(x_dct_frames_array.shape)
+        for i in range(x_dct_frames_array.shape[0]):
+            real[i] = x_dct_frames_array[i]
+            imag[i] = x_dct_frames_array[i]
 
         if channel_name == "x":
             global x_real_original_global
@@ -242,13 +242,13 @@ class PCcompression:
             quality_layers=[self.compression_value]  # 设置压缩率，较低的值意味着较高的压缩率
         )
 
-        # 保存imag部分的图像
-        imag_pil_image.save(
-            "data_output/{}_saveimg/{}_fft_frames_imag.jp2".format(prefix, channel_name),
-            format="JPEG2000",
-            quality_mode="rates",
-            quality_layers=[self.compression_value]  # 设置压缩率
-        )
+        # # 保存imag部分的图像
+        # imag_pil_image.save(
+        #     "data_output/{}_saveimg/{}_fft_frames_imag.jp2".format(prefix, channel_name),
+        #     format="JPEG2000",
+        #     quality_mode="rates",
+        #     quality_layers=[self.compression_value]  # 设置压缩率
+        # )
         with open("data_output/{}_saveimg/{}_fft_frames.json".format(prefix,channel_name), "w") as f:
             json.dump(
                 {
@@ -273,8 +273,8 @@ class PCcompression:
         imag_min = json_data["imag_min"]
         
         real_image = imageio.imread("data_output/{}_saveimg/{}_fft_frames_real.jp2".format(prefix,channel_name))
-        imag_image = imageio.imread("data_output/{}_saveimg/{}_fft_frames_imag.jp2".format(prefix,channel_name))
-
+        # imag_image = imageio.imread("data_output/{}_saveimg/{}_fft_frames_imag.jp2".format(prefix,channel_name))
+        imag_image = real_image # meanwhile
         
         
         real_image = real_image.astype(np.float64)
@@ -296,28 +296,26 @@ class PCcompression:
         real_image = real_image*max(abs(real_max),abs(real_min))
         imag_image = imag_image*max(abs(imag_max),abs(imag_min))
  
-        if channel_name == "x":
-            global x_real_original_global
-            global x_imag_original_global
+        # if channel_name == "x":
+        #     global x_real_original_global
+        #     global x_imag_original_global
             
-            realdiff = x_imag_original_global - imag_image
-            plt.imshow(realdiff)
-            plt.show()
-            plt.close()
-            x_imag_original_global = imag_image
+        #     realdiff = x_imag_original_global - imag_image
+        #     plt.imshow(realdiff)
+        #     plt.show()
+        #     plt.close()
+        #     x_imag_original_global = imag_image
         
         fft_frames = real_image + 1j*imag_image
         #reconstruct the original fft frames
-        x_original_frames = []
-        for fft_frame in fft_frames:
-            original_frame = np.fft.ifft(fft_frame)
+        x_reconstructed_frames = []
+        for dct_frame in real_image:
+            original_frame = idct(dct_frame, norm='ortho')  # 使用逆DCT并采用正交归一化
             
-            original_frame = np.real(original_frame)
+            x_reconstructed_frames.append(original_frame)
             
-            x_original_frames.append(original_frame)
-            
-        series = np.concatenate(x_original_frames)
-        
+        series = np.asarray(x_reconstructed_frames)
+        series = series.reshape(-1)
         return series
     
     
@@ -343,8 +341,7 @@ class PCcompression:
         
         
         psnr = 10*np.log10(pow(max_range,2)/mse)
-        
-        print("PSNR: ", psnr)
+        return psnr
         
     def downsample(self,x,y,z):
         x_down = np.zeros(len(x)//2)
@@ -424,27 +421,70 @@ class PCcompression:
         origin = np.stack((x_value, y_value, z_value), axis=-1)
         readed = np.stack((x_readed, y_readed, z_readed), axis=-1)
         psnr = self.calculate_psnr(origin, readed)
-        
+        print("PSNR: ", psnr)
         return original_size/compression_size ,psnr
     
 
 
-path = "./data_input/0001_point_cloud.ply"
+def calc_diff(image):
+    # calculate the difference along vertical direction
+    diff = np.diff(image, axis=0)
+    # record the initial value
+    initial_value = image[0]
+    return initial_value, diff
+
+def compress(image, threshold, max_interval):
+    initial_value, diff = calc_diff(image)
+    # find the rows where the difference is larger than the threshold
+    key_rows = np.where(np.max(np.abs(diff), axis=1) > threshold)[0] + 1
+    # if there are too many rows without a key row, add a key row
+    intervals = np.diff(key_rows, prepend=0)
+    too_long_intervals = np.where(intervals > max_interval)[0]
+    for i in reversed(too_long_intervals):
+        new_key_row = key_rows[i] + max_interval // 2
+        key_rows = np.insert(key_rows, i+1, new_key_row)
+    # store the key_rows_data separately
+    key_rows_data = image[key_rows] - image[key_rows - 1]
+    diff[key_rows - 1] = 0
+    # record the initial value, key_rows_data, and the differences
+    compressed_data = {'initial_value': initial_value, 'diff': diff, 'key_rows': key_rows, 'key_rows_data': key_rows_data}
+    return compressed_data
+
+def decompress(compressed_data):
+    initial_value = compressed_data['initial_value']
+    diff = compressed_data['diff']
+    key_rows = compressed_data['key_rows']
+    key_rows_data = compressed_data['key_rows_data']
+    # reconstruct the image from the differences, key_rows_data, and the initial value
+    image = np.empty_like(diff)
+    image[0] = initial_value
+    for i, key_row in enumerate(key_rows):
+        if i == 0:
+            image[:key_row] = np.cumsum(diff[:key_row], axis=0) + initial_value
+        else:
+            image[key_rows[i-1]:key_row] = np.cumsum(diff[key_rows[i-1]:key_row], axis=0) + image[key_rows[i-1]-1]
+        # add the key_rows_data back to the corresponding row
+        image[key_row-1] += key_rows_data[i]
+    image[key_rows[-1]:] = np.cumsum(diff[key_rows[-1]:], axis=0) + image[key_rows[-1]-1]
+    return image
+
+
+path = "./data_input/000000.ply"
 
 if __name__ == "__main__":
-    pcc = PCcompression(128,2,0,True,False)
-    pcc.pc2mp3(path)
-    
+
     frame_sizes = [4,8,16,32,64,128, 256, 512,1024,2048]
-    ununis = [0,1,2,3,4,5]
-    ratios = np.zeros((len(frame_sizes), len(ununis)))
-    psnrs = np.zeros((len(frame_sizes), len(ununis)))
+    cp_levels = [0,1,2,3,4,5,6,7,8,9,10,15,20,25,30]
+    ratios = np.zeros((len(frame_sizes), len(cp_levels)))
+    psnrs = np.zeros((len(frame_sizes), len(cp_levels)))
     i = 0
     j = 0
     for  frame_size in frame_sizes:
-        for  ununi in ununis:
-
-            pcc = PCcompression(frame_size,10,ununi,False,False)
+        for  cplevel in cp_levels:
+            print("-----------------")  
+            print("frame_size: ", frame_size)
+            print("cplevel: ", cplevel)
+            pcc = PCcompression(frame_size,cplevel,0,False,False)
             ratios[i,j], psnrs[i,j] = pcc.pc2mp3(path)
             print("-----------------")
             j+=1
@@ -453,7 +493,7 @@ if __name__ == "__main__":
     np.save("ratios.npy", ratios)
     np.save("psnrs.npy", psnrs)
     plt.imshow(psnrs)
-    plt.xticks(np.arange(len(ununis)), labels=ununis)
+    plt.xticks(np.arange(len(cp_levels)), labels=cp_levels)
     plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     plt.show()
     plt.close()
