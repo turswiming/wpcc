@@ -11,7 +11,7 @@ usage:
     and the compression ratio and PSNR will be printed.
     
 """
-
+import glymur
 import numpy as np
 from scipy.fftpack import dct
 from scipy.fftpack import idct
@@ -29,15 +29,20 @@ import numpy as np
 
 x_real_original_global = np.array([])
 class PCcompression:
-    def __init__(self,frame_size,compression_value,ununiformlevel =3,visualize = False, use8bit =False) -> None:
+    def __init__(self,
+                 frame_size,
+                 compression_value,
+                 dodownsample = False,
+                 visualize = False, 
+                 use8bit =False) -> None:
         if frame_size % 2 != 0:
             raise ValueError("frame_size should be even")
         self.frame_size = frame_size
         self.compression_value = compression_value
+        self.dodownsample = dodownsample
         # if edge_size *2 >=frame_size:
         #     raise ValueError("edge_size should be smaller than frame_size/2")
         # self.edge_size = edge_size
-        self.ununiformlevel = ununiformlevel
         self.visualize = visualize
         self.use8bit = use8bit
         self.tiny = 10000
@@ -63,11 +68,6 @@ class PCcompression:
         return np.dot(e, x)
 
 
-    def savefft(self,path,fft_frames):
-        #save fft frames
-        with open(path, "wb") as f:
-            for frame in fft_frames:
-                f.write(struct.pack('f'*len(frame), *frame))
 
     def get_min_max(self,image, width, height):
         min = np.zeros((math.ceil(image.shape[0] / width), math.ceil(image.shape[1] / height)))
@@ -140,7 +140,7 @@ class PCcompression:
             image[x,y] = highPrecisionNumbers[index]
         return image
     
-    def saveonechannel(self,value, prefix,channel_name) ->np.array:
+    def DCTProcess(self,value,channel_name) ->np.array:
         #1.1 cliping
         x_frames = []
         for i in range(0, len(value), self.frame_size):
@@ -166,81 +166,63 @@ class PCcompression:
             global x_real_original_global
 
             x_real_original_global = real
+        return real
 
-        real_max = np.max(real)
-        real_min = np.min(real)
 
-        real = real/max(abs(real_max),abs(real_min))
-
-        real = (real + 1)/2
-        
+    def saveDCTFrames(self,savedir,x_image,y_image,z_image):
+        combined_image = np.stack((x_image, y_image, z_image), axis=-1)
+        max_values = np.max(combined_image)
+        min_values = np.min(combined_image)
+        print("max_values: ", max_values)
+        print("min_values: ", min_values)
+        combined_image =  combined_image/max(abs(max_values),abs(min_values))
+        combined_image = (combined_image + 1)/2
         if self.use8bit:
-            real_image = (real*255)
+            combined_image = (combined_image*255)
         else:
-            real_image = (real*65535)
+            combined_image = (combined_image*65535)
         if self.use8bit:
-            real_image = real_image.astype(np.uint8)
+            combined_image = combined_image.astype(np.uint8)
         else:
-            real_image = real_image.astype(np.uint16)
-            
-        # if channel_name == "x":
-        #     max_values = np.max(imag_image, axis=0)
-        #     min_values = np.min(imag_image, axis=0)
-        #     mean_values = np.mean(imag_image, axis=0)  # 计算平均值
+            combined_image = combined_image.astype(np.uint16)
+        print("combined_image: ", combined_image.shape)
+        # pil_image = Image.fromarray(combined_image)
+        jp2_filename = "{}/dct_frames.jp2".format(savedir)
+        tile_size = (min(64, combined_image.shape[0]), min(64, combined_image.shape[1]))
+        jp2 = glymur.Jp2k(
+            jp2_filename, 
+            data=combined_image,
+            numres = 1,
+            cratios = [self.compression_value],
+            tilesize=tile_size,
+            display_resolution = None,
+            modesw = 1,
+            mct = False,
+            # remove unused markers
+            eph = False,
+            plt = False,
+            sop = False,
+            tlm = False,
+            )
 
-        #     columns = np.arange(imag_image.shape[1])
-        #     plt.figure(figsize=(10, 5))
-
-        #     plt.plot(columns, max_values, label='Max Values', marker='o', linestyle='-', color='r')
-        #     plt.plot(columns, min_values, label='Min Values', marker='o', linestyle='-', color='b')
-        #     plt.plot(columns, mean_values, label='Mean Values', marker='x', linestyle='--', color='g')  # 添加平均值
-
-        #     plt.title('Max, Min, and Mean Values of Each Column in imag_image')
-        #     plt.xlabel('Column Index')
-        #     plt.ylabel('Values')
-        #     plt.xticks(columns)
-        #     plt.legend()
-
-        #     plt.show()
-        #     plt.close()
-            
-        #     plt.hist(imag_image[:,1].flatten(), bins=255, density=True,)
-        #     plt.legend()
-        #     plt.show()
-        #     plt.close()
-
-        # 将numpy数组转换为Pillow图像
-        real_pil_image = Image.fromarray(real_image)
-
-        real_pil_image.save(
-            "data_output/{}_saveimg/{}_fft_frames_real.jp2".format(prefix, channel_name),
-            format="JPEG2000",
-            quality_mode="rates",
-            quality_layers=[self.compression_value]  # 设置压缩率，较低的值意味着较高的压缩率
-        )
-
-        with open("data_output/{}_saveimg/{}_fft_frames.json".format(prefix,channel_name), "w") as f:
-            json.dump(
-                {
-                    "real_max":real_max, 
-                    "real_min":real_min,
-                    }, 
-                f)
-
-
-    
+        metadata = {}
+        metadata["max_values"] = max_values
+        metadata["min_values"] = min_values
+        metadata["Downsample"] = 1 if self.dodownsample else 0
+        with open("{}/metadata.json".format(savedir), "w") as f:
+            json.dump(metadata, f)
+        pass
 
         
         
-    def readonechannel(self,prefix,channel_name) -> np.array:
-        with open("data_output/{}_saveimg/{}_fft_frames.json".format(prefix,channel_name), "r") as f:
-            json_data = json.load(f)
-        real_max = json_data["real_max"]
-        real_min = json_data["real_min"]
+    def readdata(self,savedir) -> np.array:
+        with open("{}/metadata.json".format(savedir), "r") as f:
+            metadata = json.load(f)
+        max_values = metadata["max_values"]
+        min_values = metadata["min_values"]
         
-        real_image = imageio.imread("data_output/{}_saveimg/{}_fft_frames_real.jp2".format(prefix,channel_name))
-        
-        
+        jp2k = glymur.Jp2k("{}/dct_frames.jp2".format(savedir))
+        real_image = jp2k[:]
         real_image = real_image.astype(np.float64)
 
         if self.use8bit:
@@ -251,8 +233,14 @@ class PCcompression:
 
             
         real_image = real_image*2 - 1
-        real_image = real_image*max(abs(real_max),abs(real_min))
- 
+        real_image = real_image*max(abs(max_values),abs(min_values))
+        return real_image[:,:,0] , real_image[:,:,1], real_image[:,:,2], metadata
+        
+        
+        #reconstruct the original DCT frames
+        
+    
+    def IDCTProcess(self,real_image,channel_name):
         # if channel_name == "x":
         #     global x_real_original_global
         #     global x_imag_original_global
@@ -263,7 +251,6 @@ class PCcompression:
         #     plt.close()
         #     x_imag_original_global = imag_image
         
-        #reconstruct the original DCT frames
         x_reconstructed_frames = []
         for dct_frame in real_image:
             original_frame = idct(dct_frame, norm='ortho')  # 使用逆DCT并采用正交归一化
@@ -273,7 +260,6 @@ class PCcompression:
         series = np.asarray(x_reconstructed_frames)
         series = series.reshape(-1)
         return series
-    
     
     
     def calculate_psnr(self,original, compressed):
@@ -329,32 +315,40 @@ class PCcompression:
         return x_up, y_up, z_up
     
     
-    def pc2mp3(self,filename):
-        prefix = filename.split("/")[-1].split("_")[0]
+    def pc2mp3(self,filename,savedir):
         pcd = o3d.io.read_point_cloud(filename)
         np_pcd = np.asarray(pcd.points)
         x_value = np_pcd[:, 0]
         y_value = np_pcd[:, 1]
         z_value = np_pcd[:, 2]        
         #remove this dir 
-        if os.path.exists("data_output/{}_saveimg/".format(prefix)):
-            for file in os.listdir("data_output/{}_saveimg/".format(prefix)):
-                os.remove("data_output/{}_saveimg/".format(prefix)+file)
+        if os.path.exists(savedir):
+            for file in os.listdir(savedir):
+                os.remove("{}/".format(savedir)+file)
             
             
-        if not os.path.exists("data_output/{}_saveimg/".format(prefix)):
-            os.makedirs("data_output/{}_saveimg/".format(prefix))
-        
-        x_value,y_value,z_value = self.downsample(x_value,y_value,z_value)
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+        if self.dodownsample:
+            x_value,y_value,z_value = self.downsample(x_value,y_value,z_value)
         #spilct x_value to frames, each frames has frame_size samples
-        self.saveonechannel(x_value, prefix, "x")
-        self.saveonechannel(y_value, prefix, "y")
-        self.saveonechannel(z_value, prefix, "z")
-
-        x_readed = self.readonechannel(prefix, "x")
-        y_readed = self.readonechannel(prefix, "y")
-        z_readed = self.readonechannel(prefix, "z")
-        x_readed,y_readed,z_readed =  self.upsample(x_readed,y_readed,z_readed)
+        x_image = self.DCTProcess(x_value, "x")
+        y_image = self.DCTProcess(y_value, "y")
+        z_image = self.DCTProcess(z_value, "z")
+        #save DCT frames
+        self.saveDCTFrames(savedir, x_image, y_image, z_image)
+        #---------------------------------------------------------
+        #above is saver
+        
+        #here is reader
+        #---------------------------------------------------------
+        
+        x_read_image, y_read_image ,z_read_image,metadata = self.readdata(savedir)
+        x_readed = self.IDCTProcess(x_read_image, "x")
+        y_readed = self.IDCTProcess(y_read_image, "y")
+        z_readed = self.IDCTProcess(z_read_image, "z")
+        if metadata["Downsample"]==1:
+            x_readed,y_readed,z_readed =  self.upsample(x_readed,y_readed,z_readed)
 
 
         pc = np.stack((x_readed, y_readed, z_readed), axis=-1)
@@ -362,13 +356,13 @@ class PCcompression:
         pcd.points = o3d.utility.Vector3dVector(pc)
         if self.visualize:
             o3d.visualization.draw_geometries([pcd])
-        o3d.io.write_point_cloud("data_output/{}_saveimg/_saved_point_cloud.ply".format(prefix), pcd)
+        o3d.io.write_point_cloud("{}/saved_point_cloud.ply".format(savedir), pcd)
         #calculate compression ratio
         compression_size = 0
-        for file in os.listdir("data_output/{}_saveimg/".format(prefix)):
+        for file in os.listdir("{}/".format(savedir)):
             if not file.endswith(".ply"):
-                compression_size += os.path.getsize("data_output/{}_saveimg/".format(prefix)+file)
-        original_size = os.path.getsize("data_output/{}_saveimg/_saved_point_cloud.ply".format(prefix))
+                compression_size += os.path.getsize("{}/".format(savedir)+file)
+        original_size = os.path.getsize("{}/saved_point_cloud.ply".format(savedir))
 
         print("original size: ", original_size)
         print("compression size: ", compression_size)
@@ -428,9 +422,10 @@ def decompress(compressed_data):
 path = "./data_input/000000.ply"
 
 if __name__ == "__main__":
-
-    frame_sizes = [4,8,16,32,64,128, 256, 512,1024,2048]
-    cp_levels = [0,1,2,3,4,5,6,7,8,9,10,15,20,25,30]
+    pcc = PCcompression(1024,1,True,False,False)
+    pcc.pc2mp3(path,"./data_output/01_save")
+    frame_sizes = [4,8,16,32,64,128, 256, 512,1024,2048,4096,8192]
+    cp_levels = [1]
     ratios = np.zeros((len(frame_sizes), len(cp_levels)))
     psnrs = np.zeros((len(frame_sizes), len(cp_levels)))
     i = 0
@@ -440,8 +435,8 @@ if __name__ == "__main__":
             print("-----------------")  
             print("frame_size: ", frame_size)
             print("cplevel: ", cplevel)
-            pcc = PCcompression(frame_size,cplevel,0,False,False)
-            ratios[i,j], psnrs[i,j] = pcc.pc2mp3(path)
+            pcc = PCcompression(frame_size,cplevel,True,False,False)
+            ratios[i,j], psnrs[i,j] = pcc.pc2mp3(path,"./data_output/01")
             print("-----------------")
             j+=1
         j = 0
