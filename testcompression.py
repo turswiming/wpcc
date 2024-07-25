@@ -28,7 +28,6 @@ from sklearn.neighbors import NearestNeighbors
 import numpy as np
 
 x_real_original_global = np.array([])
-x_imag_original_global = np.array([])
 class PCcompression:
     def __init__(self,frame_size,compression_value,ununiformlevel =3,visualize = False, use8bit =False) -> None:
         if frame_size % 2 != 0:
@@ -142,68 +141,47 @@ class PCcompression:
         return image
     
     def saveonechannel(self,value, prefix,channel_name) ->np.array:
-        #downsample
-        # value = value[::2]
         #1.1 cliping
         x_frames = []
         for i in range(0, len(value), self.frame_size):
             x_frames.append(value[i:i+self.frame_size])
-        #1.2 fft
-        #apply fft to each frame
+        #1.2 DCT
+        #apply DCT to each frame
         x_dct_frames = []
         max_length = 0
         for frame in x_frames:
             if len(frame) < self.frame_size:
                 continue
-            dct_result = dct(frame, norm='ortho')  # 使用DCT并采用正交归一化
+            dct_result = dct(frame, norm='ortho')
             x_dct_frames.append(dct_result)
             if len(dct_result) > max_length:
                 max_length = len(dct_result)
         
         x_dct_frames_array = np.array(x_dct_frames)
         real = np.zeros(x_dct_frames_array.shape)
-        imag = np.zeros(x_dct_frames_array.shape)
         for i in range(x_dct_frames_array.shape[0]):
             real[i] = x_dct_frames_array[i]
-            imag[i] = x_dct_frames_array[i]
 
         if channel_name == "x":
             global x_real_original_global
-            global x_imag_original_global
 
             x_real_original_global = real
-            x_imag_original_global = imag
-        real_max = np.max(real,axis=0)
-        real_min = np.min(real,axis=0)
 
         real_max = np.max(real)
         real_min = np.min(real)
-        imag_max = np.max(imag)
-        imag_min = np.min(imag)
+
         real = real/max(abs(real_max),abs(real_min))
-        imag = imag/max(abs(imag_max),abs(imag_min))
 
         real = (real + 1)/2
-        imag = (imag + 1)/2
         
-        # real = real[:,:real.shape[1]//2]
-
-        # diff = real - fliplr_real
-        # plt.imshow(diff)
-        # plt.show()
-        # plt.close()
         if self.use8bit:
             real_image = (real*255)
-            imag_image = (imag*255)
         else:
             real_image = (real*65535)
-            imag_image = (imag*65535)
         if self.use8bit:
             real_image = real_image.astype(np.uint8)
-            imag_image = imag_image.astype(np.uint8)
         else:
             real_image = real_image.astype(np.uint16)
-            imag_image = imag_image.astype(np.uint16)
             
         # if channel_name == "x":
         #     max_values = np.max(imag_image, axis=0)
@@ -233,7 +211,6 @@ class PCcompression:
 
         # 将numpy数组转换为Pillow图像
         real_pil_image = Image.fromarray(real_image)
-        imag_pil_image = Image.fromarray(imag_image)
 
         real_pil_image.save(
             "data_output/{}_saveimg/{}_fft_frames_real.jp2".format(prefix, channel_name),
@@ -242,20 +219,11 @@ class PCcompression:
             quality_layers=[self.compression_value]  # 设置压缩率，较低的值意味着较高的压缩率
         )
 
-        # # 保存imag部分的图像
-        # imag_pil_image.save(
-        #     "data_output/{}_saveimg/{}_fft_frames_imag.jp2".format(prefix, channel_name),
-        #     format="JPEG2000",
-        #     quality_mode="rates",
-        #     quality_layers=[self.compression_value]  # 设置压缩率
-        # )
         with open("data_output/{}_saveimg/{}_fft_frames.json".format(prefix,channel_name), "w") as f:
             json.dump(
                 {
                     "real_max":real_max, 
-                    "real_min":real_min, 
-                    "imag_max":imag_max, 
-                    "imag_min":imag_min,
+                    "real_min":real_min,
                     }, 
                 f)
 
@@ -269,32 +237,21 @@ class PCcompression:
             json_data = json.load(f)
         real_max = json_data["real_max"]
         real_min = json_data["real_min"]
-        imag_max = json_data["imag_max"]
-        imag_min = json_data["imag_min"]
         
         real_image = imageio.imread("data_output/{}_saveimg/{}_fft_frames_real.jp2".format(prefix,channel_name))
-        # imag_image = imageio.imread("data_output/{}_saveimg/{}_fft_frames_imag.jp2".format(prefix,channel_name))
-        imag_image = real_image # meanwhile
         
         
         real_image = real_image.astype(np.float64)
-        imag_image = imag_image.astype(np.float64)
 
         if self.use8bit:
             real_image = ((real_image)/255)
-            imag_image = ((imag_image)/255)
         else:
             real_image = ((real_image)/65535)
-            imag_image = ((imag_image)/65535)
         
 
             
         real_image = real_image*2 - 1
-        imag_image = imag_image*2 - 1
-        # real_image = self.unpackUnuniQuantize(real_image, self.ununiformlevel)
-        # imag_image = self.unpackUnuniQuantize(imag_image, self.ununiformlevel)
         real_image = real_image*max(abs(real_max),abs(real_min))
-        imag_image = imag_image*max(abs(imag_max),abs(imag_min))
  
         # if channel_name == "x":
         #     global x_real_original_global
@@ -306,8 +263,7 @@ class PCcompression:
         #     plt.close()
         #     x_imag_original_global = imag_image
         
-        fft_frames = real_image + 1j*imag_image
-        #reconstruct the original fft frames
+        #reconstruct the original DCT frames
         x_reconstructed_frames = []
         for dct_frame in real_image:
             original_frame = idct(dct_frame, norm='ortho')  # 使用逆DCT并采用正交归一化
