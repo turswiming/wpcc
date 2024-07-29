@@ -11,3 +11,4 @@
 
 psnrs.npy
 ratios.npy
+/__pycache__
