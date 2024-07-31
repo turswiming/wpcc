@@ -6,9 +6,14 @@ This file is used to compress point cloud data using fft and image compression m
 The main function is pc2mp3, which takes a path of a point cloud file as input, and output the compression ratio and PSNR of the compression.
 
 usage:
-    pcc = PCcompression(frame_size, compression_value, downsample, visualize, use8bit)
-    pcc.pc2mp3(path)
-    and the compression ratio and PSNR will be printed.
+
+    pcc = PCcompression(16, 1, dodownsample=True, visualize=True, use8bit=False)
+    pcc.compress("./path/to/point/cloud", "./data_output/01_save")
+    pcc.pc2mp3("./path/to/compressed_directory")
+    #and the compression ratio and PSNR will be printed.
+
+    pcc2 = PCcompression("./data_output/01_save")
+    pcc2.decompress("./data_output/01_save/01.ply")
     
 """
 
@@ -33,35 +38,51 @@ x_real_original_global = np.array([])
 
 
 class PCcompression:
-    def __init__(self,
-                 frame_size,
-                 compression_value,
-                 dodownsample=False,
-                 visualize=False,
-                 use8bit=False) -> None:
-        if frame_size % 2 != 0:
-            raise ValueError("frame_size should be even")
-        fwtable = fwt.FrameSizeTable()
-        if frame_size not in fwtable.get_frame_sizes(compression_value):
-            print("frame_size: ", frame_size, " is not suggested, please use the following frame sizes: ",
-                  fwtable.get_frame_sizes(compression_value))
-            print("frame_size will be set to", fwtable.get_frame_sizes(compression_value)[0],
-                  " automatically this time")
-            self.frame_size = fwtable.get_frame_sizes(compression_value)[0]
-        else:
-            self.frame_size = frame_size
-        self.compression_value = compression_value
-        self.dodownsample = dodownsample
-        # if edge_size *2 >=frame_size:
-        #     raise ValueError("edge_size should be smaller than frame_size/2")
-        # self.edge_size = edge_size
-        self.visualize = visualize
-        self.use8bit = use8bit
-        self.tiny = 10000
-        self.threshold = 0.005
-        pass
+    def __init__(self, *args, **kwargs):
+        """
+        Initialize the MyClass object. This constructor can handle two different sets of parameters.
 
-    def dft(self, x):
+        Parameters:
+        compressedDir (str): Directory where compressed files are stored. If provided, other parameters should be None.
+        frame_size (int): Size of the frame. Must be even. If provided, compressedDir should be None.
+        compression_value (float): Compression value. Required if frame_size is provided.
+        dodownsample (bool): Flag to indicate if downsampling should be done. Default is False.
+        visualize (bool): Flag to indicate if visualization is needed. Default is False.
+        use8bit (bool): Flag to indicate if 8-bit processing should be used. Default is False.
+        """
+        if len(args) == 1 and isinstance(args[0], str):
+            # Initialize with compressedDir
+            self.compressedDir = args[0]
+            self.frame_size = None
+            self.compression_value = None
+            self.dodownsample = False
+            self.visualize = False
+            self.use8bit = False
+        elif len(args) >= 2 and isinstance(args[0], int) and isinstance(args[1], int):
+            # Initialize with frame_size and compression_value
+            frame_size = args[0]
+            if frame_size % 2 != 0:
+                raise ValueError("frame_size should be even")
+            fwtable = fwt.FrameSizeTable()
+            compression_value = args[1]
+            # if frame_size not in fwtable.get_frame_sizes(compression_value):
+            #     print("frame_size: ", frame_size, " is not suggested, please use the following frame sizes: ",
+            #           fwtable.get_frame_sizes(compression_value))
+            #     print("frame_size will be set to", fwtable.get_frame_sizes(compression_value)[0],
+            #           " automatically this time")
+            #     self.frame_size = fwtable.get_frame_sizes(compression_value)[0]
+            # else:
+            self.frame_size = frame_size
+            self.compression_value = compression_value
+            self.dodownsample = args[2] if len(args) >= 3 else False
+            self.visualize = args[3] if len(args) >= 4 else False
+            self.use8bit = args[4] if len(args) >= 5 else False
+            self.tiny = 10000
+            self.threshold = 0.005
+        else:
+            raise ValueError("Invalid arguments for MyClass initialization")
+
+    def __dft(self, x):
         """
         Compute the Discrete Fourier Transform (DFT) of an array.
         
@@ -77,7 +98,7 @@ class PCcompression:
         e = np.exp(-2j * np.pi * k * n / N)
         return np.dot(e, x)
 
-    def get_min_max(self, image, width, height):
+    def __get_min_max(self, image, width, height):
         min = np.zeros((math.ceil(image.shape[0] / width), math.ceil(image.shape[1] / height)))
         max = np.zeros((math.ceil(image.shape[0] / width), math.ceil(image.shape[1] / height)))
         for i in range(0, image.shape[0], width):
@@ -86,49 +107,49 @@ class PCcompression:
                 max[int(i / width), int(j / height)] = np.max(image[i:i + width, j:j + height])
         return min, max
 
-    def sintransform(self, image, level):
+    def __sintransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.sin(image * 3.1415926 / 2)
-            return self.sintransform(image, level - 1)
+            return self.__sintransform(image, level - 1)
 
-    def arcsintransform(self, image, level):
+    def __arcsintransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.arcsin(image) / (3.1415926 / 2)
-            return self.arcsintransform(image, level - 1)
+            return self.__arcsintransform(image, level - 1)
 
-    def arctantransform(self, image, level):
+    def __arctantransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.arctan(image / (3.1415926 / 2))
-            return self.arctantransform(image, level - 1)
+            return self.__arctantransform(image, level - 1)
 
-    def tantransform(self, image, level):
+    def __tantransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.tan(image) * 3.1415926 / 2
-            return self.tantransform(image, level - 1)
+            return self.__tantransform(image, level - 1)
 
-    def UnuniQuantize(self, image: np.array, level: float):
-        return self.arcsintransform(image, level)
-        return self.arctantransform(image, level)
+    def __UnuniQuantize(self, image: np.array, level: float):
+        # return self.__arcsintransform(image, level)
+        return self.__arctantransform(image, level)
         return np.arctan(image * level) * 2 / 3.1415926
-        return self.sintransform(image, level)
+        return self.__sintransform(image, level)
         pass
 
-    def unpackUnuniQuantize(self, image: np.array, level: float):
-        return self.sintransform(image, level)
-        return self.tantransform(image, level)
+    def __unpackUnuniQuantize(self, image: np.array, level: float):
+        # return self.__sintransform(image, level)
+        return self.__tantransform(image, level)
         return np.tan((image) * 3.1415926 / 2) / level
-        return self.arcsintransform(image, level)
+        return self.__arcsintransform(image, level)
         pass
 
-    def genlowPrecisionPic(self, image: np.array, threshold: float):
+    def __genlowPrecisionPic(self, image: np.array, threshold: float):
 
         mask = (image > -threshold) & (image < threshold)
         print("mask: ", mask[mask == True].shape)
@@ -140,8 +161,8 @@ class PCcompression:
         false_indices = np.where(mask_line == False)[0]
         return image_scaled, false_indices
 
-    def rebuildHighPrecisionPic(self, lowPrecisionPic: np.array, highPrecisionNumbers: np.array, mask_line: np.array,
-                                threshold: float):
+    def __rebuildHighPrecisionPic(self, lowPrecisionPic: np.array, highPrecisionNumbers: np.array, mask_line: np.array,
+                                  threshold: float):
         image = lowPrecisionPic * threshold
         for index in range(mask_line.shape[0]):
             indices = mask_line[index]
@@ -150,7 +171,7 @@ class PCcompression:
             image[x, y] = highPrecisionNumbers[index]
         return image
 
-    def DCTProcess(self, value, channel_name) -> np.array:
+    def __DCTProcess(self, value, channel_name) -> np.array:
         # 1.1 cliping
         x_frames = []
         for i in range(0, len(value), self.frame_size):
@@ -178,14 +199,25 @@ class PCcompression:
             x_real_original_global = real
         return real
 
-    def saveDCTFrames(self, savedir, x_image, y_image, z_image):
+    def __saveDCTFrames(self, savedir, data):
+        x_image = data["x_image"]
+        y_image = data["y_image"]
+        z_image = data["z_image"]
         combined_image = np.stack((x_image, y_image, z_image), axis=-1)
+        combined_image = combined_image.astype(np.float64)
         max_values = np.max(combined_image)
         min_values = np.min(combined_image)
         print("max_values: ", max_values)
         print("min_values: ", min_values)
         combined_image = combined_image / max(abs(max_values), abs(min_values))
-        combined_image = (combined_image + 1) / 2
+        test = np.asarray(
+            [-1, -0.9, -0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
+             1])
+        test = self.__UnuniQuantize(test, 50)
+        combined_image = combined_image * 0.5 + 0.5
+        plt.plot(test)
+        plt.show()
+        plt.close()
         if self.use8bit:
             combined_image = (combined_image * 255)
         else:
@@ -194,7 +226,6 @@ class PCcompression:
             combined_image = combined_image.astype(np.uint8)
         else:
             combined_image = combined_image.astype(np.uint16)
-        print("combined_image: ", combined_image.shape)
         # pil_image = Image.fromarray(combined_image)
         jp2_filename = "{}/dct_frames.jp2".format(savedir)
         tile_size = (min(64, combined_image.shape[0]), min(64, combined_image.shape[1]))
@@ -213,7 +244,6 @@ class PCcompression:
             sop=False,
             tlm=False,
         )
-
         metadata = {}
         metadata["max_values"] = max_values
         metadata["min_values"] = min_values
@@ -222,7 +252,7 @@ class PCcompression:
             json.dump(metadata, f)
         pass
 
-    def readdata(self, savedir) -> np.array:
+    def __readdata(self, savedir) -> np.array:
         with open("{}/metadata.json".format(savedir), "r") as f:
             metadata = json.load(f)
         max_values = metadata["max_values"]
@@ -236,14 +266,14 @@ class PCcompression:
             real_image = ((real_image) / 255)
         else:
             real_image = ((real_image) / 65535)
-
         real_image = real_image * 2 - 1
+
         real_image = real_image * max(abs(max_values), abs(min_values))
         return real_image[:, :, 0], real_image[:, :, 1], real_image[:, :, 2], metadata
 
         # reconstruct the original DCT frames
 
-    def IDCTProcess(self, real_image, channel_name):
+    def __IDCTProcess(self, real_image, channel_name):
         # if channel_name == "x":
         #     global x_real_original_global
         #     global x_imag_original_global
@@ -264,7 +294,7 @@ class PCcompression:
         series = series.reshape(-1)
         return series
 
-    def calculate_psnr(self, original, compressed):
+    def __calculate_psnr(self, original, compressed):
         x_value = original[:, 0]
         y_value = original[:, 1]
         z_value = original[:, 2]
@@ -286,7 +316,7 @@ class PCcompression:
         psnr = 10 * np.log10(pow(max_range, 2) / mse)
         return psnr
 
-    def downsample(self, x, y, z):
+    def __downsample(self, x, y, z):
         x_down = np.zeros(len(x) // 2)
         x_down = x[::2]
         y_down = np.zeros(len(y) // 2)
@@ -295,7 +325,10 @@ class PCcompression:
         z_down = z[::2]
         return x_down, y_down, z_down
 
-    def upsample(self, x, y, z):
+    def __disance(self, a, b):
+        return pow(pow(a[0] - b[0], 2) + pow(a[1] - b[1], 2) + pow(a[2] - b[2], 2), 0.5)
+
+    def __upsample(self, x, y, z):
         assert x.shape == y.shape == z.shape
         x_up = np.zeros(len(x) * 2)
         y_up = np.zeros(len(y) * 2)
@@ -304,8 +337,26 @@ class PCcompression:
         y_up[::2] = y
         z_up[::2] = z
         for i in range(1, len(x_up) - 1, 2):
-            if (abs(x_up[i - 1] - x_up[i + 1]) + abs(y_up[i - 1] - y_up[i + 1]) + abs(
-                    z_up[i - 1] - z_up[i + 1])) > 0.01:
+
+            if (i - 3 < 0):
+                x_up[i] = (x_up[i - 1] + x_up[i + 1]) / 2
+                y_up[i] = (y_up[i - 1] + y_up[i + 1]) / 2
+                z_up[i] = (z_up[i - 1] + z_up[i + 1]) / 2
+                continue
+            if (i + 3 >= len(x_up) - 1):
+                x_up[i] = x_up[i - 1]
+                y_up[i] = y_up[i - 1]
+                z_up[i] = z_up[i - 1]
+                continue
+
+            left = np.array([x_up[i - 1], y_up[i - 1], z_up[i - 1]])
+            right = np.array([x_up[i + 1], y_up[i + 1], z_up[i + 1]])
+            distance_2 = self.__disance(left, right)
+            leftleft = np.array([x_up[i - 3], y_up[i - 3], z_up[i - 3]])
+            rightright = np.array([x_up[i + 3], y_up[i + 3], z_up[i + 3]])
+            distance_4 = self.__disance(leftleft, rightright)
+
+            if distance_2 * 1.1 > distance_4:
                 x_up[i] = x_up[i - 1]
                 y_up[i] = y_up[i - 1]
                 z_up[i] = z_up[i - 1]
@@ -315,7 +366,11 @@ class PCcompression:
                 z_up[i] = (z_up[i - 1] + z_up[i + 1]) / 2
         return x_up, y_up, z_up
 
-    def pc2mp3(self, filename, savedir):
+    def compress(self, filename, savedir):
+        return self.__compress(filename, savedir)
+
+    def __compress(self, filename, savedir):
+        self.compressedDir = savedir
         pcd = o3d.io.read_point_cloud(filename)
         np_pcd = np.asarray(pcd.points)
         x_value = np_pcd[:, 0]
@@ -329,32 +384,48 @@ class PCcompression:
         if not os.path.exists(savedir):
             os.makedirs(savedir)
         if self.dodownsample:
-            x_value, y_value, z_value = self.downsample(x_value, y_value, z_value)
+            x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
         # spilct x_value to frames, each frames has frame_size samples
-        x_image = self.DCTProcess(x_value, "x")
-        y_image = self.DCTProcess(y_value, "y")
-        z_image = self.DCTProcess(z_value, "z")
+        x_image = self.__DCTProcess(x_value, "x")
+        y_image = self.__DCTProcess(y_value, "y")
+        z_image = self.__DCTProcess(z_value, "z")
         # save DCT frames
-        self.saveDCTFrames(savedir, x_image, y_image, z_image)
-        # ---------------------------------------------------------
-        # above is saver
+        data = {}
+        data["x_image"] = x_image
+        data["y_image"] = y_image
+        data["z_image"] = z_image
+        self.__saveDCTFrames(savedir, data)
+        return x_value, y_value, z_value
 
-        # here is reader
-        # ---------------------------------------------------------
+    def decompress(self, savepath):
+        self.__decompress(savepath)
+        pass
 
-        x_read_image, y_read_image, z_read_image, metadata = self.readdata(savedir)
-        x_readed = self.IDCTProcess(x_read_image, "x")
-        y_readed = self.IDCTProcess(y_read_image, "y")
-        z_readed = self.IDCTProcess(z_read_image, "z")
+    def __decompress(self, savepath):
+        x_read_image, y_read_image, z_read_image, metadata = self.__readdata(self.compressedDir)
+        x_readed = self.__IDCTProcess(x_read_image, "x")
+        y_readed = self.__IDCTProcess(y_read_image, "y")
+        z_readed = self.__IDCTProcess(z_read_image, "z")
         if metadata["Downsample"] == 1:
-            x_readed, y_readed, z_readed = self.upsample(x_readed, y_readed, z_readed)
+            x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
 
         pc = np.stack((x_readed, y_readed, z_readed), axis=-1)
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(pc)
         if self.visualize:
             o3d.visualization.draw_geometries([pcd])
-        o3d.io.write_point_cloud("{}/saved_point_cloud.ply".format(savedir), pcd)
+        o3d.io.write_point_cloud(savepath, pcd)
+        return x_readed, y_readed, z_readed, pcd
+
+    def pc2mp3(self, filename, savedir):
+        x_value, y_value, z_value = self.__compress(filename, savedir)
+        # ---------------------------------------------------------
+        # above is saver
+
+        # here is reader
+        # ---------------------------------------------------------
+        x_readed, y_readed, z_readed, pcd = self.__decompress("{}/saved_point_cloud.ply".format(savedir))
+
         # calculate compression ratio
         compression_size = 0
         for file in os.listdir("{}/".format(savedir)):
@@ -368,12 +439,12 @@ class PCcompression:
 
         origin = np.stack((x_value, y_value, z_value), axis=-1)
         readed = np.stack((x_readed, y_readed, z_readed), axis=-1)
-        psnr = self.calculate_psnr(origin, readed)
+        psnr = self.__calculate_psnr(origin, readed)
         print("PSNR: ", psnr)
         return original_size / compression_size, psnr
 
 
-def calc_diff(image):
+def __calc_diff(image):
     # calculate the difference along vertical direction
     diff = np.diff(image, axis=0)
     # record the initial value
@@ -381,8 +452,8 @@ def calc_diff(image):
     return initial_value, diff
 
 
-def compress(image, threshold, max_interval):
-    initial_value, diff = calc_diff(image)
+def __img_compress(image, threshold, max_interval):
+    initial_value, diff = __calc_diff(image)
     # find the rows where the difference is larger than the threshold
     key_rows = np.where(np.max(np.abs(diff), axis=1) > threshold)[0] + 1
     # if there are too many rows without a key row, add a key row
@@ -400,7 +471,7 @@ def compress(image, threshold, max_interval):
     return compressed_data
 
 
-def decompress(compressed_data):
+def __img_decompress(compressed_data):
     initial_value = compressed_data['initial_value']
     diff = compressed_data['diff']
     key_rows = compressed_data['key_rows']
