@@ -19,7 +19,7 @@ if __name__ == "__main__":
     # plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     # plt.show()
     # plt.close()
-    pcc = PCcompression(16,1,1,True, True, False)
+    pcc = PCcompression(128,1,0,True, True, False)
     pcc.pc2mp3(path, "./data_output/01_save")
 
 
@@ -28,13 +28,13 @@ if __name__ == "__main__":
     i = 0
     j = 0
     with open ("csvfile.csv", "w") as f:
-        f.write("frame_size,cp_level,ratio,psnr\n")
+        f.write("frame_size,highres,ratio,psnr\n")
         for  frame_size in frame_sizes:
             for  highres in highress:
                 print("-----------------")  
                 print("frame_size: ", frame_size)
                 print("cplevel: ", highres)
-                pcc = PCcompression(frame_size,1,highres,True,False,False)
+                pcc = PCcompression(frame_size,10,highres,True,False,False)
                 ratios[i,j], psnrs[i,j] = pcc.pc2mp3(path,"./data_output/01_save")
                 f.write("{},{},{},{}\n".format(frame_size,highres,ratios[i,j],psnrs[i,j]))
                 j+=1
@@ -48,7 +48,7 @@ if __name__ == "__main__":
     plt.show()
     plt.close()
     plt.imshow(psnrs)
-    plt.xticks(np.arange(len(highres)), labels=highres)
+    plt.xticks(np.arange(len(highress)), labels=highress)
     plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     plt.show()
     plt.close()
