@@ -37,7 +37,7 @@ class PCcompression:
     def __init__(self,
                  frame_size,
                  compression_value,
-                 highres_rate = 0.1,
+                 highres_rate=0.1,
                  dodownsample=False,
                  visualize=False,
                  use8bit=False) -> None:
@@ -54,7 +54,7 @@ class PCcompression:
         self.frame_size = frame_size
         self.compression_value = compression_value
         self.dodownsample = dodownsample
-        if highres_rate >= 0.0 and highres_rate <= 1.0:
+        if 0.0 <= highres_rate <= 1.0:
             self.highres_rate = highres_rate
         else:
             raise ValueError("highres_rate should be between 0.0 and 1.0")
@@ -67,7 +67,14 @@ class PCcompression:
         self.threshold = 0.005
         pass
 
-    def dft(self, x):
+    def __calc_diff(self, image):
+        # calculate the difference along vertical direction
+        diff = np.diff(image, axis=0)
+        # record the initial value
+        initial_value = image[0]
+        return initial_value, diff
+
+    def __dft(self, x):
         """
         Compute the Discrete Fourier Transform (DFT) of an array.
         
@@ -157,12 +164,12 @@ class PCcompression:
         return image
 
     def DCTProcess(self, value, channel_name) -> np.array:
-        #1.1 cliping
+        # 1.1 cliping
         x_frames = []
         for i in range(0, len(value), self.frame_size):
             x_frames.append(value[i:i + self.frame_size])
-        #1.2 DCT
-        #apply DCT to each frame
+        # 1.2 DCT
+        # apply DCT to each frame
         x_dct_frames = []
         max_length = 0
         for frame in x_frames:
@@ -188,11 +195,11 @@ class PCcompression:
         global combined_image
         combined_image = np.stack((x_image, y_image, z_image), axis=-1)
 
-        highres_size = int(self.highres_rate*self.frame_size)
+        highres_size = int(self.highres_rate * self.frame_size)
         metadata = {}
 
         if highres_size != 0:
-            highres_img = combined_image[:,:highres_size,:]
+            highres_img = combined_image[:, :highres_size, :]
             highres_max_values = np.max(highres_img)
             highres_min_values = np.min(highres_img)
             highres_img = highres_img / max(abs(highres_max_values), abs(highres_min_values))
@@ -222,30 +229,30 @@ class PCcompression:
             metadata["highres_min_values"] = highres_min_values
 
         if highres_size != self.frame_size:
-            lowres_img = combined_image[:,highres_size:,:]
+            lowres_img = combined_image[:, highres_size:, :]
             lowres_max_values = np.max(lowres_img)
             lowres_min_values = np.min(lowres_img)
             lowres_img = lowres_img / max(abs(lowres_max_values), abs(lowres_min_values))
-            init, dif = calc_diff(lowres_img)
-            dif_indices = np.where((dif > 1/255) | (dif < -1/255))
+            init, dif = self.__calc_diff(lowres_img)
+            dif_indices = np.where((dif > 1 / 255) | (dif < -1 / 255))
             bitmap = np.zeros(dif.shape[0])
             for i in range(dif_indices[0].shape[0]):
                 bitmap[dif_indices[0][i]] = 1
             bitmap = bitmap.astype(np.bool)
             bitmap = np.logical_not(bitmap)
             dif = dif[bitmap]
-            dif = dif*255
+            dif = dif * 255
             dif = (dif + 1) / 2
             dif = (dif * 255)
             dif = dif.astype(np.uint8)
             jp2_filename = "{}/dct_frames_low.jp2".format(savedir)
-            tile_size = (dif.shape[0],dif.shape[1])
+            tile_size = (dif.shape[0], dif.shape[1])
             if dif.shape[0] != 0:
                 jp2 = glymur.Jp2k(
                     jp2_filename,
                     data=dif,
                     numres=1,
-                    cratios=(self.compression_value*2,),
+                    cratios=(self.compression_value * 2,),
                     tilesize=tile_size,
                     display_resolution=None,
                     modesw=1,
@@ -256,9 +263,9 @@ class PCcompression:
                     sop=False,
                     tlm=False,
                 )
-            #reverse bitmap
+            # reverse bitmap
             bitmap = np.logical_not(bitmap)
-            bitmap_new = np.zeros((bitmap.shape[0]+1))
+            bitmap_new = np.zeros((bitmap.shape[0] + 1))
             bitmap_new[1:] = bitmap
             bitmap_new[0] = True
             bitmap_new = bitmap_new.astype(np.bool)
@@ -272,7 +279,7 @@ class PCcompression:
                 jp2_filename,
                 data=lowres_img,
                 numres=1,
-                cratios=(self.compression_value*2,),
+                cratios=(self.compression_value * 2,),
                 tilesize=tile_size,
                 display_resolution=None,
                 modesw=1,
@@ -283,7 +290,7 @@ class PCcompression:
                 sop=False,
                 tlm=False,
             )
-            print("Saved bitmap",bitmap_new.shape)
+            print("Saved bitmap", bitmap_new.shape)
             bit_arr = bitarray(bitmap_new.tolist())
             self.__saveBitArray(bit_arr, "{}/bitmap.bin".format(savedir))
             metadata["lowres_max_values"] = lowres_max_values
@@ -297,8 +304,9 @@ class PCcompression:
 
     def __saveBitArray(self, bitarray: bitarray, path: str):
         with open(path, "wb") as f:
-            bitarray.tofile(f)        
+            bitarray.tofile(f)
         pass
+
     def readdata(self, savedir) -> np.array:
         with open("{}/metadata.json".format(savedir), "r") as f:
             metadata = json.load(f)
@@ -348,7 +356,7 @@ class PCcompression:
                     final_image[i] = key_image[key_image_index]
                     key_image_index += 1
                 if bitmap[i] == False:
-                    final_image[i] = dif[diff_image_index]+final_image[i-1]
+                    final_image[i] = dif[diff_image_index] + final_image[i - 1]
                     diff_image_index += 1
             final_image = final_image * max(abs(max_values), abs(min_values))
 
@@ -356,13 +364,13 @@ class PCcompression:
         if "highres_max_values" in metadata and "lowres_max_values" in metadata:
             real_image = np.concatenate((highres_img, lowres_img), axis=1)
         elif "highres_max_values" in metadata:
-            real_image =highres_img
+            real_image = highres_img
         else:
             real_image = lowres_img
 
         return real_image[:, :, 0], real_image[:, :, 1], real_image[:, :, 2], metadata
 
-        #reconstruct the original DCT frames
+        # reconstruct the original DCT frames
 
     def IDCTProcess(self, real_image, channel_name):
         # if channel_name == "x":
@@ -389,15 +397,15 @@ class PCcompression:
         x_value = original[:, 0]
         y_value = original[:, 1]
         z_value = original[:, 2]
-        #build point cloud
+        # build point cloud
         nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(original)
 
-        #search nearest point
+        # search nearest point
         mse = 0
         distances, indices = nbrs.kneighbors(compressed)
         mse = np.mean(distances[:, 0])
 
-        #calculate MSE
+        # calculate MSE
         # mse /= len(x_value)+len(y_value)+len(z_value)
         x_range = np.max(x_value) - np.min(x_value)
         y_range = np.max(y_value) - np.min(y_value)
@@ -426,7 +434,7 @@ class PCcompression:
         z_up[::2] = z
         for i in range(1, len(x_up) - 1, 2):
             distance = abs(x_up[i - 1] - x_up[i + 1]) + abs(y_up[i - 1] - y_up[i + 1]) + abs(
-                    z_up[i - 1] - z_up[i + 1])
+                z_up[i - 1] - z_up[i + 1])
             if distance > 0.01:
                 x_up[i] = x_up[i - 1]
                 y_up[i] = y_up[i - 1]
@@ -443,7 +451,7 @@ class PCcompression:
         x_value = np_pcd[:, 0]
         y_value = np_pcd[:, 1]
         z_value = np_pcd[:, 2]
-        #remove this dir 
+        # remove this dir
         if os.path.exists(savedir):
             for file in os.listdir(savedir):
                 os.remove("{}/".format(savedir) + file)
@@ -452,17 +460,17 @@ class PCcompression:
             os.makedirs(savedir)
         if self.dodownsample:
             x_value, y_value, z_value = self.downsample(x_value, y_value, z_value)
-        #spilct x_value to frames, each frames has frame_size samples
+        # spilct x_value to frames, each frames has frame_size samples
         x_image = self.DCTProcess(x_value, "x")
         y_image = self.DCTProcess(y_value, "y")
         z_image = self.DCTProcess(z_value, "z")
-        #save DCT frames
+        # save DCT frames
         self.saveDCTFrames(savedir, x_image, y_image, z_image)
-        #---------------------------------------------------------
-        #above is saver
+        # ---------------------------------------------------------
+        # above is saver
 
-        #here is reader
-        #---------------------------------------------------------
+        # here is reader
+        # ---------------------------------------------------------
 
         x_read_image, y_read_image, z_read_image, metadata = self.readdata(savedir)
         x_readed = self.IDCTProcess(x_read_image, "x")
@@ -477,7 +485,7 @@ class PCcompression:
         if self.visualize:
             o3d.visualization.draw_geometries([pcd])
         o3d.io.write_point_cloud("{}/saved_point_cloud.ply".format(savedir), pcd)
-        #calculate compression ratio
+        # calculate compression ratio
         compression_size = 0
         for file in os.listdir("{}/".format(savedir)):
             if not file.endswith(".ply"):
@@ -493,50 +501,3 @@ class PCcompression:
         psnr = self.calculate_psnr(origin, readed)
         print("PSNR: ", psnr)
         return original_size / compression_size, psnr
-
-
-def calc_diff(image):
-    # calculate the difference along vertical direction
-    diff = np.diff(image, axis=0)
-    # record the initial value
-    initial_value = image[0]
-    return initial_value, diff
-
-
-def compress(image, threshold, max_interval):
-    initial_value, diff = calc_diff(image)
-    # find the rows where the difference is larger than the threshold
-    key_rows = np.where(np.max(np.abs(diff), axis=1) > threshold)[0] + 1
-    # if there are too many rows without a key row, add a key row
-    intervals = np.diff(key_rows, prepend=0)
-    too_long_intervals = np.where(intervals > max_interval)[0]
-    for i in reversed(too_long_intervals):
-        new_key_row = key_rows[i] + max_interval // 2
-        key_rows = np.insert(key_rows, i + 1, new_key_row)
-    # store the key_rows_data separately
-    key_rows_data = image[key_rows] - image[key_rows - 1]
-    diff[key_rows - 1] = 0
-    # record the initial value, key_rows_data, and the differences
-    compressed_data = {'initial_value': initial_value, 'diff': diff, 'key_rows': key_rows,
-                       'key_rows_data': key_rows_data}
-    return compressed_data
-
-
-def decompress(compressed_data):
-    initial_value = compressed_data['initial_value']
-    diff = compressed_data['diff']
-    key_rows = compressed_data['key_rows']
-    key_rows_data = compressed_data['key_rows_data']
-    # reconstruct the image from the differences, key_rows_data, and the initial value
-    image = np.empty_like(diff)
-    image[0] = initial_value
-    for i, key_row in enumerate(key_rows):
-        if i == 0:
-            image[:key_row] = np.cumsum(diff[:key_row], axis=0) + initial_value
-        else:
-            image[key_rows[i - 1]:key_row] = np.cumsum(diff[key_rows[i - 1]:key_row], axis=0) + image[
-                key_rows[i - 1] - 1]
-        # add the key_rows_data back to the corresponding row
-        image[key_row - 1] += key_rows_data[i]
-    image[key_rows[-1]:] = np.cumsum(diff[key_rows[-1]:], axis=0) + image[key_rows[-1] - 1]
-    return image
