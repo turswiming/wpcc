@@ -8,3 +8,5 @@
 
 psnrs.npy
 ratios.npy
+/.idea/
+/__PYCACHE__/
