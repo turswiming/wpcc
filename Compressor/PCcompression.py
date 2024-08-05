@@ -38,6 +38,8 @@ class PCcompression:
                  frame_size,
                  compression_value,
                  highres_rate=0.1,
+                 Ocbit_threshold=1/255,
+                 overlap_size = 0,
                  dodownsample=False,
                  visualize=False,
                  use8bit=False) -> None:
@@ -53,6 +55,7 @@ class PCcompression:
         # else:
         self.frame_size = frame_size
         self.compression_value = compression_value
+        self.overlap_size = overlap_size
         self.dodownsample = dodownsample
         if 0.0 <= highres_rate <= 1.0:
             self.highres_rate = highres_rate
@@ -64,7 +67,7 @@ class PCcompression:
         self.visualize = visualize
         self.use8bit = use8bit
         self.tiny = 10000
-        self.threshold = 0.005
+        self.Ocbit_threshold = Ocbit_threshold
         pass
 
     def __calc_diff(self, image):
@@ -167,18 +170,16 @@ class PCcompression:
         # 1.1 cliping
         x_frames = []
         for i in range(0, len(value), self.frame_size):
-            x_frames.append(value[i:i + self.frame_size])
+            x_frames.append(value[i:i + self.frame_size+self.overlap_size])
         # 1.2 DCT
         # apply DCT to each frame
         x_dct_frames = []
-        max_length = 0
         for frame in x_frames:
-            if len(frame) < self.frame_size:
+            if len(frame) < self.frame_size+self.overlap_size:
                 continue
             dct_result = dct(frame, norm='ortho')
             x_dct_frames.append(dct_result)
-            if len(dct_result) > max_length:
-                max_length = len(dct_result)
+
 
         x_dct_frames_array = np.array(x_dct_frames)
         real = np.zeros(x_dct_frames_array.shape)
@@ -195,7 +196,7 @@ class PCcompression:
         global combined_image
         combined_image = np.stack((x_image, y_image, z_image), axis=-1)
 
-        highres_size = int(self.highres_rate * self.frame_size)
+        highres_size = int(self.highres_rate * (self.frame_size+self.overlap_size))
         metadata = {}
 
         if highres_size != 0:
@@ -228,20 +229,20 @@ class PCcompression:
             metadata["highres_max_values"] = highres_max_values
             metadata["highres_min_values"] = highres_min_values
 
-        if highres_size != self.frame_size:
+        if highres_size != (self.frame_size+self.overlap_size):
             lowres_img = combined_image[:, highres_size:, :]
             lowres_max_values = np.max(lowres_img)
             lowres_min_values = np.min(lowres_img)
             lowres_img = lowres_img / max(abs(lowres_max_values), abs(lowres_min_values))
             init, dif = self.__calc_diff(lowres_img)
-            dif_indices = np.where((dif > 1 / 255) | (dif < -1 / 255))
+            dif_indices = np.where((dif > self.Ocbit_threshold) | (dif < -self.Ocbit_threshold))
             bitmap = np.zeros(dif.shape[0])
             for i in range(dif_indices[0].shape[0]):
                 bitmap[dif_indices[0][i]] = 1
             bitmap = bitmap.astype(np.bool)
             bitmap = np.logical_not(bitmap)
             dif = dif[bitmap]
-            dif = dif * 255
+            dif = dif / self.Ocbit_threshold
             dif = (dif + 1) / 2
             dif = (dif * 255)
             dif = dif.astype(np.uint8)
@@ -252,7 +253,7 @@ class PCcompression:
                     jp2_filename,
                     data=dif,
                     numres=1,
-                    cratios=(self.compression_value * 2,),
+                    cratios=(self.compression_value,),
                     tilesize=tile_size,
                     display_resolution=None,
                     modesw=1,
@@ -279,7 +280,7 @@ class PCcompression:
                 jp2_filename,
                 data=lowres_img,
                 numres=1,
-                cratios=(self.compression_value * 2,),
+                cratios=(self.compression_value,),
                 tilesize=tile_size,
                 display_resolution=None,
                 modesw=1,
@@ -298,6 +299,8 @@ class PCcompression:
             metadata["bitarraysize"] = bitmap_new.shape[0]
 
         metadata["Downsample"] = 1 if self.dodownsample else 0
+        metadata["FrameSize"] = self.frame_size
+        metadata["overlapSize"] = self.overlap_size
         with open("{}/metadata.json".format(savedir), "w") as f:
             json.dump(metadata, f)
         pass
@@ -334,7 +337,7 @@ class PCcompression:
                 dif = dif.astype(np.float64)
                 dif = ((dif) / 255)
                 dif = dif * 2 - 1
-                dif = ((dif) / 255)
+                dif = ((dif) * self.Ocbit_threshold)
             jp2k_key = glymur.Jp2k(
                 "{}/dct_frames_low_key.jp2".format(savedir),
             )
@@ -372,7 +375,7 @@ class PCcompression:
 
         # reconstruct the original DCT frames
 
-    def IDCTProcess(self, real_image, channel_name):
+    def IDCTProcess(self, real_image, channel_name,overlap_size) -> np.array:
         # if channel_name == "x":
         #     global x_real_original_global
         #     global x_imag_original_global
@@ -384,12 +387,24 @@ class PCcompression:
         #     x_imag_original_global = imag_image
 
         x_reconstructed_frames = []
-        for dct_frame in real_image:
+        for id ,dct_frame in enumerate(real_image):
             original_frame = idct(dct_frame, norm='ortho')  # 使用逆DCT并采用正交归一化
-
             x_reconstructed_frames.append(original_frame)
 
-        series = np.asarray(x_reconstructed_frames)
+        overlap_frames = np.asarray(x_reconstructed_frames)
+        if overlap_size == 0:
+            series = overlap_frames.reshape(-1)
+            return series
+        series = overlap_frames[:, :-overlap_size]
+        for i in range(1, series.shape[0]):
+            for j in range(overlap_size):
+                a = overlap_frames[i - 1, -overlap_size + j]
+                b = series[i, j]
+                distance = float(abs(a - b))
+                if distance < 5:
+                    series[i, j] = a * (j / overlap_size) + b * (1 - j / overlap_size)
+
+
         series = series.reshape(-1)
         return series
 
@@ -473,9 +488,9 @@ class PCcompression:
         # ---------------------------------------------------------
 
         x_read_image, y_read_image, z_read_image, metadata = self.readdata(savedir)
-        x_readed = self.IDCTProcess(x_read_image, "x")
-        y_readed = self.IDCTProcess(y_read_image, "y")
-        z_readed = self.IDCTProcess(z_read_image, "z")
+        x_readed = self.IDCTProcess(x_read_image, "x",metadata["overlapSize"])
+        y_readed = self.IDCTProcess(y_read_image, "y",metadata["overlapSize"])
+        z_readed = self.IDCTProcess(z_read_image, "z",metadata["overlapSize"])
         if metadata["Downsample"] == 1:
             x_readed, y_readed, z_readed = self.upsample(x_readed, y_readed, z_readed)
 
