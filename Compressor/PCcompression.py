@@ -407,14 +407,14 @@ class PCcompression:
 
     def IDCTProcess(self, real_image, channel_name,overlap_size) -> np.array:
         if channel_name == "x":
-            global combined_image
+            # global combined_image
 
-            realdiff = combined_image[:,:,0] - real_image
-            plt.plot(real_image[1])
-            plt.plot(combined_image[1,:,0])
-            # plt.imshow(realdiff[:50,:])
-            plt.show()
-            plt.close()
+            # realdiff = combined_image[:,:,0] - real_image
+            # plt.plot(real_image[1])
+            # plt.plot(combined_image[1,:,0])
+            # # plt.imshow(realdiff[:50,:])
+            # plt.show()
+            # plt.close()
             x_imag_original_global = real_image
 
         x_reconstructed_frames = []

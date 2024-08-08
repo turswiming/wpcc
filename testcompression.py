@@ -11,6 +11,7 @@ if __name__ == "__main__":
     hires_rates = [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1]
     thresholds = [1/255,2/255,3/255,4/255,5/255,6/255,7/255,8/255,9/255,10/255]
     threshold_labels = ["1/255","2/255","3/255","4/255","5/255","6/255","7/255","8/255","9/255","10/255"]
+    
     # ratios = np.load("ratios.npy")
     # psnrs = np.load("psnrs.npy")
     # # # 创建一个二维的 numpy 数组
@@ -63,7 +64,7 @@ if __name__ == "__main__":
                 print("-----------------")  
                 print("frame_size: ", hires_rate)
                 print("cplevel: ", threshold)
-                pcc = PCcompression(64,10,hires_rate,threshold,True,False,False)
+                pcc = PCcompression(32,10,0,hires_rate,2,True,False,False)
                 ratios[i,j], psnrs[i,j] = pcc.pc2mp3(path,"./data_output/01_save")
                 f.write("{},{},{},{}\n".format(hires_rate,threshold,ratios[i,j],psnrs[i,j]))
                 j+=1
