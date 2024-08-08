@@ -131,15 +131,15 @@ class PCcompression:
             return self.tantransform(image, level - 1)
 
     def UnuniQuantize(self, image: np.array, level: float):
-        return self.arcsintransform(image, level)
-        return self.arctantransform(image, level)
+        # return self.arcsintransform(image, level)
+        # return self.arctantransform(image, level)
         return np.arctan(image * level) * 2 / 3.1415926
         return self.sintransform(image, level)
         pass
 
     def unpackUnuniQuantize(self, image: np.array, level: float):
-        return self.sintransform(image, level)
-        return self.tantransform(image, level)
+        # return self.sintransform(image, level)
+        # return self.tantransform(image, level)
         return np.tan((image) * 3.1415926 / 2) / level
         return self.arcsintransform(image, level)
         pass
@@ -192,6 +192,27 @@ class PCcompression:
             x_real_original_global = real
         return real
 
+    def __createContinuedBitmap(self, bitmap: np.array) -> np.array:
+        bitmap = bitmap.astype(np.float64)
+        #blur the bitmap
+        for i in range(1, bitmap.shape[0] - 1):
+            bitmap[i] = (bitmap[i - 1] + bitmap[i] + bitmap[i + 1]) / 3
+        #find the edge
+        edge = np.zeros(bitmap.shape[0])
+        for i in range(1, bitmap.shape[0] - 1):
+            edge[i] = abs(bitmap[i] - bitmap[i - 1])
+        #find the edge
+        edge = edge > 0.5
+        #find the edge
+        edge = edge.astype(np.float64)
+        #find the edge
+        for i in range(1, bitmap.shape[0] - 1):
+            if edge[i] == 1:
+                bitmap[i] = 1
+        bitmap = bitmap.astype(np.bool)
+        return bitmap
+
+
     def saveDCTFrames(self, savedir, x_image, y_image, z_image):
         global combined_image
         combined_image = np.stack((x_image, y_image, z_image), axis=-1)
@@ -204,13 +225,14 @@ class PCcompression:
             highres_max_values = np.max(highres_img)
             highres_min_values = np.min(highres_img)
             highres_img = highres_img / max(abs(highres_max_values), abs(highres_min_values))
+            highres_img = self.UnuniQuantize(highres_img, 10)
             highres_img = (highres_img + 1) / 2
 
             highres_img = (highres_img * 65535)
             highres_img = highres_img.astype(np.uint16)
 
-            jp2_filename = "{}/dct_frames_high.jp2".format(savedir)
-            tile_size = (min(64, highres_img.shape[0]), min(64, highres_img.shape[1]))
+            jp2_filename = "{}/dct_frames_left.jp2".format(savedir)
+            tile_size = (highres_img.shape[0],  highres_img.shape[1])
             jp2 = glymur.Jp2k(
                 jp2_filename,
                 data=highres_img,
@@ -234,24 +256,26 @@ class PCcompression:
             lowres_max_values = np.max(lowres_img)
             lowres_min_values = np.min(lowres_img)
             lowres_img = lowres_img / max(abs(lowres_max_values), abs(lowres_min_values))
-            init, dif = self.__calc_diff(lowres_img)
-            dif_indices = np.where((dif > self.Ocbit_threshold) | (dif < -self.Ocbit_threshold))
-            bitmap = np.zeros(dif.shape[0])
+            rightside = lowres_img[:, int(lowres_img.shape[1]/2):]
+            rightside_max = np.max(rightside)
+            rightside_min = np.min(rightside)
+            threshold = max(abs(rightside_max), abs(rightside_min)) * self.Ocbit_threshold
+            dif_indices = np.where((rightside > threshold) | (rightside < -threshold))
+            bitmap = np.zeros(rightside.shape[0])
             for i in range(dif_indices[0].shape[0]):
                 bitmap[dif_indices[0][i]] = 1
             bitmap = bitmap.astype(np.bool)
-            bitmap = np.logical_not(bitmap)
-            dif = dif[bitmap]
-            dif = dif / self.Ocbit_threshold
-            dif = (dif + 1) / 2
-            dif = (dif * 255)
-            dif = dif.astype(np.uint8)
-            jp2_filename = "{}/dct_frames_low.jp2".format(savedir)
-            tile_size = (dif.shape[0], dif.shape[1])
-            if dif.shape[0] != 0:
+            bitmap = self.__createContinuedBitmap(bitmap)
+            unkey_img = lowres_img[bitmap]
+            unkey_img = (unkey_img + 1) / 2
+            unkey_img = (unkey_img * 65535)
+            unkey_img = unkey_img.astype(np.uint16)
+            jp2_filename = "{}/dct_frames_right.jp2".format(savedir)
+            tile_size = (unkey_img.shape[0], unkey_img.shape[1])
+            if unkey_img.shape[0] != 0:
                 jp2 = glymur.Jp2k(
                     jp2_filename,
-                    data=dif,
+                    data=unkey_img,
                     numres=1,
                     cratios=(self.compression_value,),
                     tilesize=tile_size,
@@ -266,31 +290,30 @@ class PCcompression:
                 )
             # reverse bitmap
             bitmap = np.logical_not(bitmap)
-            bitmap_new = np.zeros((bitmap.shape[0] + 1))
-            bitmap_new[1:] = bitmap
-            bitmap_new[0] = True
+            bitmap_new = bitmap
             bitmap_new = bitmap_new.astype(np.bool)
-            lowres_img = lowres_img[bitmap_new]
-            lowres_img = (lowres_img + 1) / 2
-            lowres_img = (lowres_img * 65535)
-            lowres_img = lowres_img.astype(np.uint16)
-            tile_size = (lowres_img.shape[0], lowres_img.shape[1])
-            jp2_filename = "{}/dct_frames_low_key.jp2".format(savedir)
-            jp2 = glymur.Jp2k(
-                jp2_filename,
-                data=lowres_img,
-                numres=1,
-                cratios=(self.compression_value,),
-                tilesize=tile_size,
-                display_resolution=None,
-                modesw=1,
-                mct=False,
-                # remove unused markers
-                eph=False,
-                plt=False,
-                sop=False,
-                tlm=False,
-            )
+            key_img = lowres_img[bitmap_new]
+            key_img = (key_img + 1) / 2
+            key_img = (key_img * 65535)
+            key_img = key_img.astype(np.uint16)
+            tile_size = (key_img.shape[0], key_img.shape[1])
+            jp2_filename = "{}/dct_frames_right_key.jp2".format(savedir)
+            if key_img.shape[0] != 0:
+                jp2 = glymur.Jp2k(
+                    jp2_filename,
+                    data=key_img,
+                    numres=1,
+                    cratios=(self.compression_value*2,),
+                    tilesize=tile_size,
+                    display_resolution=None,
+                    modesw=1,
+                    mct=False,
+                    # remove unused markers
+                    eph=False,
+                    plt=False,
+                    sop=False,
+                    tlm=False,
+                )
             print("Saved bitmap", bitmap_new.shape)
             bit_arr = bitarray(bitmap_new.tolist())
             self.__saveBitArray(bit_arr, "{}/bitmap.bin".format(savedir))
@@ -317,40 +340,47 @@ class PCcompression:
         if "highres_max_values" in metadata:
             max_values = metadata["highres_max_values"]
             min_values = metadata["highres_min_values"]
-            jp2k = glymur.Jp2k("{}/dct_frames_high.jp2".format(savedir))
+            jp2k = glymur.Jp2k("{}/dct_frames_left.jp2".format(savedir))
             real_image = jp2k[:]
             real_image = real_image.astype(np.float64)
             real_image = ((real_image) / 65535)
 
             real_image = real_image * 2 - 1
+            real_image = self.unpackUnuniQuantize(real_image, 10)
+
             real_image = real_image * max(abs(max_values), abs(min_values))
             highres_img = real_image
         if "lowres_max_values" in metadata:
             max_values = metadata["lowres_max_values"]
             min_values = metadata["lowres_min_values"]
             bitarraysize = metadata["bitarraysize"]
-            if os.path.exists("{}/dct_frames_low.jp2".format(savedir)):
+            if os.path.exists("{}/dct_frames_right.jp2".format(savedir)):
                 jp2k_diff = glymur.Jp2k(
-                    "{}/dct_frames_low.jp2".format(savedir),
+                    "{}/dct_frames_right.jp2".format(savedir),
                 )
                 dif = jp2k_diff[:]
                 dif = dif.astype(np.float64)
-                dif = ((dif) / 255)
+                dif = ((dif) / 65535)
                 dif = dif * 2 - 1
-                dif = ((dif) * self.Ocbit_threshold)
-            jp2k_key = glymur.Jp2k(
-                "{}/dct_frames_low_key.jp2".format(savedir),
-            )
-            key_image = jp2k_key[:]
-            key_image = key_image.astype(np.float64)
-            key_image = ((key_image) / 65535)
-            key_image = key_image * 2 - 1
+                # dif = ((dif) * self.Ocbit_threshold)
+                wide = dif.shape[1]
+            if os.path.exists("{}/dct_frames_right_key.jp2".format(savedir)):
+                jp2k_key = glymur.Jp2k(
+                    "{}/dct_frames_right_key.jp2".format(savedir),
+                )
+                key_image = jp2k_key[:]
+                key_image = key_image.astype(np.float64)
+                key_image = ((key_image) / 65535)
+                key_image = key_image * 2 - 1
+                wide = key_image.shape[1]
+
             loaded_bit_arr = bitarray()
             with open("{}/bitmap.bin".format(savedir), "rb") as f:
                 loaded_bit_arr.fromfile(f)
             bitmap = np.array(loaded_bit_arr.tolist(), dtype=bool)
             bitmap = bitmap[:bitarraysize]
-            final_image = np.zeros((bitmap.shape[0], key_image.shape[1], 3))
+
+            final_image = np.zeros((bitmap.shape[0], wide, 3))
 
             key_image_index = 0
             diff_image_index = 0
@@ -359,7 +389,7 @@ class PCcompression:
                     final_image[i] = key_image[key_image_index]
                     key_image_index += 1
                 if bitmap[i] == False:
-                    final_image[i] = dif[diff_image_index] + final_image[i - 1]
+                    final_image[i] = dif[diff_image_index]
                     diff_image_index += 1
             final_image = final_image * max(abs(max_values), abs(min_values))
 
@@ -376,15 +406,16 @@ class PCcompression:
         # reconstruct the original DCT frames
 
     def IDCTProcess(self, real_image, channel_name,overlap_size) -> np.array:
-        # if channel_name == "x":
-        #     global x_real_original_global
-        #     global x_imag_original_global
+        if channel_name == "x":
+            global combined_image
 
-        #     realdiff = x_imag_original_global - imag_image
-        #     plt.imshow(realdiff)
-        #     plt.show()
-        #     plt.close()
-        #     x_imag_original_global = imag_image
+            realdiff = combined_image[:,:,0] - real_image
+            plt.plot(real_image[1])
+            plt.plot(combined_image[1,:,0])
+            # plt.imshow(realdiff[:50,:])
+            plt.show()
+            plt.close()
+            x_imag_original_global = real_image
 
         x_reconstructed_frames = []
         for id ,dct_frame in enumerate(real_image):
@@ -401,8 +432,7 @@ class PCcompression:
                 a = overlap_frames[i - 1, -overlap_size + j]
                 b = series[i, j]
                 distance = float(abs(a - b))
-                if distance < 5:
-                    series[i, j] = a * (j / overlap_size) + b * (1 - j / overlap_size)
+                series[i, j] = a * (j / overlap_size) + b * (1 - j / overlap_size)
 
 
         series = series.reshape(-1)
@@ -461,6 +491,7 @@ class PCcompression:
         return x_up, y_up, z_up
 
     def pc2mp3(self, filename, savedir):
+
         pcd = o3d.io.read_point_cloud(filename)
         np_pcd = np.asarray(pcd.points)
         x_value = np_pcd[:, 0]
@@ -514,5 +545,6 @@ class PCcompression:
         origin = np.stack((x_value, y_value, z_value), axis=-1)
         readed = np.stack((x_readed, y_readed, z_readed), axis=-1)
         psnr = self.calculate_psnr(origin, readed)
+        print("BPP: ", 8 * compression_size / x_readed.shape[0])
         print("PSNR: ", psnr)
         return original_size / compression_size, psnr
