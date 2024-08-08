@@ -98,7 +98,7 @@ class PCcompression:
         e = np.exp(-2j * np.pi * k * n / N)
         return np.dot(e, x)
 
-    def get_min_max(self, image, width, height):
+    def __get_min_max(self, image, width, height):
         min = np.zeros((math.ceil(image.shape[0] / width), math.ceil(image.shape[1] / height)))
         max = np.zeros((math.ceil(image.shape[0] / width), math.ceil(image.shape[1] / height)))
         for i in range(0, image.shape[0], width):
@@ -107,46 +107,46 @@ class PCcompression:
                 max[int(i / width), int(j / height)] = np.max(image[i:i + width, j:j + height])
         return min, max
 
-    def sintransform(self, image, level):
+    def __sintransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.sin(image * 3.1415926 / 2)
-            return self.sintransform(image, level - 1)
+            return self.__sintransform(image, level - 1)
 
-    def arcsintransform(self, image, level):
+    def __arcsintransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.arcsin(image) / (3.1415926 / 2)
-            return self.arcsintransform(image, level - 1)
+            return self.__arcsintransform(image, level - 1)
 
-    def arctantransform(self, image, level):
+    def __arctantransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.arctan(image / (3.1415926 / 2))
-            return self.arctantransform(image, level - 1)
+            return self.__arctantransform(image, level - 1)
 
-    def tantransform(self, image, level):
+    def __tantransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.tan(image) * 3.1415926 / 2
-            return self.tantransform(image, level - 1)
+            return self.__tantransform(image, level - 1)
 
-    def UnuniQuantize(self, image: np.array, level: float):
-        # return self.arcsintransform(image, level)
-        # return self.arctantransform(image, level)
+    def __UnuniQuantize(self, image: np.array, level: float):
+        # return self.__arcsintransform(image, level)
+        # return self.__arctantransform(image, level)
         return np.arctan(image * level) * 2 / 3.1415926
-        return self.sintransform(image, level)
+        return self.__sintransform(image, level)
         pass
 
-    def unpackUnuniQuantize(self, image: np.array, level: float):
-        # return self.sintransform(image, level)
-        # return self.tantransform(image, level)
+    def __unpackUnuniQuantize(self, image: np.array, level: float):
+        # return self.__sintransform(image, level)
+        # return self.__tantransform(image, level)
         return np.tan((image) * 3.1415926 / 2) / level
-        return self.arcsintransform(image, level)
+        return self.__arcsintransform(image, level)
         pass
 
     def genlowPrecisionPic(self, image: np.array, threshold: float):
@@ -176,7 +176,7 @@ class PCcompression:
             image[x, y] = highPrecisionNumbers[index]
         return image
 
-    def DCTProcess(self, value, channel_name) -> np.array:
+    def __DCTProcess(self, value, channel_name) -> np.array:
         # 1.1 cliping
         x_frames = []
         for i in range(0, len(value), self.frame_size):
@@ -223,7 +223,7 @@ class PCcompression:
         return bitmap
 
 
-    def saveDCTFrames(self, savedir, x_image, y_image, z_image):
+    def __saveDCTFrames(self, savedir, x_image, y_image, z_image):
         global combined_image
         combined_image = np.stack((x_image, y_image, z_image), axis=-1)
 
@@ -235,7 +235,7 @@ class PCcompression:
             highres_max_values = np.max(highres_img)
             highres_min_values = np.min(highres_img)
             highres_img = highres_img / max(abs(highres_max_values), abs(highres_min_values))
-            highres_img = self.UnuniQuantize(highres_img, 10)
+            highres_img = self.__UnuniQuantize(highres_img, 10)
             highres_img = (highres_img + 1) / 2
 
             highres_img = (highres_img * 65535)
@@ -343,7 +343,7 @@ class PCcompression:
             bitarray.tofile(f)
         pass
 
-    def readdata(self, savedir) -> np.array:
+    def __readdata(self, savedir) -> np.array:
         with open("{}/metadata.json".format(savedir), "r") as f:
             metadata = json.load(f)
 
@@ -356,7 +356,7 @@ class PCcompression:
             real_image = ((real_image) / 65535)
 
             real_image = real_image * 2 - 1
-            real_image = self.unpackUnuniQuantize(real_image, 10)
+            real_image = self.__unpackUnuniQuantize(real_image, 10)
 
             real_image = real_image * max(abs(max_values), abs(min_values))
             highres_img = real_image
@@ -415,7 +415,7 @@ class PCcompression:
 
         # reconstruct the original DCT frames
 
-    def IDCTProcess(self, real_image, channel_name,overlap_size) -> np.array:
+    def __IDCTProcess(self, real_image, channel_name,overlap_size) -> np.array:
         if channel_name == "x":
             # global combined_image
 
@@ -448,7 +448,7 @@ class PCcompression:
         series = series.reshape(-1)
         return series
 
-    def calculate_psnr(self, original, compressed):
+    def __calculate_psnr(self, original, compressed):
         x_value = original[:, 0]
         y_value = original[:, 1]
         z_value = original[:, 2]
@@ -481,7 +481,7 @@ class PCcompression:
         psnr = 10 * np.log10(pow(max_range, 2) / mse)
         return psnr
 
-    def downsample(self, x, y, z):
+    def __downsample(self, x, y, z):
         x_down = np.zeros(len(x) // 2)
         x_down = x[::2]
         y_down = np.zeros(len(y) // 2)
@@ -492,7 +492,7 @@ class PCcompression:
         z_down = z[::2]
         return x_down, y_down, z_down
 
-    def upsample(self, x, y, z):
+    def __upsample(self, x, y, z):
         assert x.shape == y.shape == z.shape
         x_up = np.zeros(len(x) * 2)
         y_up = np.zeros(len(y) * 2)
@@ -538,25 +538,25 @@ class PCcompression:
         if not os.path.exists(savedir):
             os.makedirs(savedir)
         if self.dodownsample:
-            x_value, y_value, z_value = self.downsample(x_value, y_value, z_value)
+            x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
         # spilct x_value to frames, each frames has frame_size samples
-        x_image = self.DCTProcess(x_value, "x")
-        y_image = self.DCTProcess(y_value, "y")
-        z_image = self.DCTProcess(z_value, "z")
+        x_image = self.__DCTProcess(x_value, "x")
+        y_image = self.__DCTProcess(y_value, "y")
+        z_image = self.__DCTProcess(z_value, "z")
         # save DCT frames
-        self.saveDCTFrames(savedir, x_image, y_image, z_image)
+        self.__saveDCTFrames(savedir, x_image, y_image, z_image)
         # ---------------------------------------------------------
         # above is saver
 
         # here is reader
         # ---------------------------------------------------------
 
-        x_read_image, y_read_image, z_read_image, metadata = self.readdata(savedir)
-        x_readed = self.IDCTProcess(x_read_image, "x",metadata["overlapSize"])
-        y_readed = self.IDCTProcess(y_read_image, "y",metadata["overlapSize"])
-        z_readed = self.IDCTProcess(z_read_image, "z",metadata["overlapSize"])
+        x_read_image, y_read_image, z_read_image, metadata = self.__readdata(savedir)
+        x_readed = self.__IDCTProcess(x_read_image, "x",metadata["overlapSize"])
+        y_readed = self.__IDCTProcess(y_read_image, "y",metadata["overlapSize"])
+        z_readed = self.__IDCTProcess(z_read_image, "z",metadata["overlapSize"])
         if metadata["Downsample"] == 1:
-            x_readed, y_readed, z_readed = self.upsample(x_readed, y_readed, z_readed)
+            x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
 
         pc = np.stack((x_readed, y_readed, z_readed), axis=-1)
         pcd = o3d.geometry.PointCloud()
@@ -579,7 +579,7 @@ class PCcompression:
 
         origin = np.stack((x_value, y_value, z_value), axis=-1)
         readed = np.stack((x_readed, y_readed, z_readed), axis=-1)
-        psnr = self.calculate_psnr(origin, readed)
+        psnr = self.__calculate_psnr(origin, readed)
         print("BPP: ", 8 * compression_size / x_readed.shape[0])
         print("PSNR: ", psnr)
         return original_size / compression_size, psnr
