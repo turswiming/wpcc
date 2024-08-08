@@ -1,11 +1,21 @@
-
 from Compressor.PCcompression import PCcompression
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 path = "./data_input/000000.ply"
+"""
+usage:
 
+    pcc = PCcompression(16, 1, dodownsample=True, visualize=True, use8bit=False)
+    pcc.compress("./path/to/point/cloud", "./data_output/01_save")
+    pcc.pc2mp3("./path/to/compressed_directory")
+    #and the compression ratio and PSNR will be printed.
+
+    pcc2 = PCcompression("./data_output/01_save")
+    pcc2.decompress("./data_output/01_save/01.ply")
+    
+"""
 if __name__ == "__main__":
     frame_sizes = [4,8,16,32,64,128, 256, 512,1024,2048,4096,8192]
     hires_rates = [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1]

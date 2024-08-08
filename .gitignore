@@ -2,7 +2,10 @@
 ! pc\0001_point_cloud.ply
 
 /datafromld
-/venv
+/.venv
+/.idea
+/.vscode
+/.vs
 
 00-36*.las
 

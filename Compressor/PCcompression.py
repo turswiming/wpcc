@@ -6,9 +6,14 @@ This file is used to compress point cloud data using fft and image compression m
 The main function is pc2mp3, which takes a path of a point cloud file as input, and output the compression ratio and PSNR of the compression.
 
 usage:
-    pcc = PCcompression(frame_size, compression_value, downsample, visualize, use8bit)
-    pcc.pc2mp3(path)
-    and the compression ratio and PSNR will be printed.
+
+    pcc = PCcompression(16, 1, dodownsample=True, visualize=True, use8bit=False)
+    pcc.compress("./path/to/point/cloud", "./data_output/01_save")
+    pcc.pc2mp3("./path/to/compressed_directory")
+    #and the compression ratio and PSNR will be printed.
+
+    pcc2 = PCcompression("./data_output/01_save")
+    pcc2.decompress("./data_output/01_save/01.ply")
     
 """
 
@@ -152,6 +157,8 @@ class PCcompression:
         image_clamped = np.clip(image, -threshold, threshold)
         image_scaled = image_clamped / threshold
 
+        image_scaled = image_clamped / threshold
+
         mask_line = mask.reshape(-1)
         false_indices = np.where(mask_line == False)[0]
         return image_scaled, false_indices
@@ -161,6 +168,9 @@ class PCcompression:
         image = lowPrecisionPic * threshold
         for index in range(mask_line.shape[0]):
             indices = mask_line[index]
+            x = indices // image.shape[1]
+            y = indices % image.shape[1]
+            image[x, y] = highPrecisionNumbers[index]
             x = indices // image.shape[1]
             y = indices % image.shape[1]
             image[x, y] = highPrecisionNumbers[index]
@@ -443,8 +453,10 @@ class PCcompression:
         y_value = original[:, 1]
         z_value = original[:, 2]
         # build point cloud
+        # build point cloud
         nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(original)
 
+        # search nearest point
         # search nearest point
         mse = 0
         _, indices = nbrs.kneighbors(compressed)
@@ -461,19 +473,30 @@ class PCcompression:
         max_range = pow(pow(x_range, 2) + pow(y_range, 2) + pow(z_range, 2), 0.5)
 
         psnr = 10 * np.log10(pow(max_range, 2) / mse)
+        x_range = np.max(x_value) - np.min(x_value)
+        y_range = np.max(y_value) - np.min(y_value)
+        z_range = np.max(z_value) - np.min(z_value)
+        max_range = pow(pow(x_range, 2) + pow(y_range, 2) + pow(z_range, 2), 0.5)
+
+        psnr = 10 * np.log10(pow(max_range, 2) / mse)
         return psnr
 
     def downsample(self, x, y, z):
         x_down = np.zeros(len(x) // 2)
         x_down = x[::2]
         y_down = np.zeros(len(y) // 2)
+        y_down = np.zeros(len(y) // 2)
         y_down = y[::2]
+        z_down = np.zeros(len(z) // 2)
         z_down = np.zeros(len(z) // 2)
         z_down = z[::2]
         return x_down, y_down, z_down
 
     def upsample(self, x, y, z):
         assert x.shape == y.shape == z.shape
+        x_up = np.zeros(len(x) * 2)
+        y_up = np.zeros(len(y) * 2)
+        z_up = np.zeros(len(z) * 2)
         x_up = np.zeros(len(x) * 2)
         y_up = np.zeros(len(y) * 2)
         z_up = np.zeros(len(z) * 2)
@@ -491,6 +514,9 @@ class PCcompression:
                 x_up[i] = (x_up[i - 1] + x_up[i + 1]) / 2
                 y_up[i] = (y_up[i - 1] + y_up[i + 1]) / 2
                 z_up[i] = (z_up[i - 1] + z_up[i + 1]) / 2
+                x_up[i] = (x_up[i - 1] + x_up[i + 1]) / 2
+                y_up[i] = (y_up[i - 1] + y_up[i + 1]) / 2
+                z_up[i] = (z_up[i - 1] + z_up[i + 1]) / 2
         return x_up, y_up, z_up
 
     def pc2mp3(self, filename, savedir):
@@ -501,8 +527,12 @@ class PCcompression:
         y_value = np_pcd[:, 1]
         z_value = np_pcd[:, 2]
         # remove this dir
+        z_value = np_pcd[:, 2]
+        # remove this dir
         if os.path.exists(savedir):
             for file in os.listdir(savedir):
+                os.remove("{}/".format(savedir) + file)
+
                 os.remove("{}/".format(savedir) + file)
 
         if not os.path.exists(savedir):
@@ -543,6 +573,8 @@ class PCcompression:
 
         print("original size: ", original_size)
         print("compression size: ", compression_size)
+        print("compression ratio: ", original_size / compression_size)
+
         print("compression ratio: ", original_size / compression_size)
 
         origin = np.stack((x_value, y_value, z_value), axis=-1)
