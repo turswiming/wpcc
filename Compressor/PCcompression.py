@@ -447,8 +447,11 @@ class PCcompression:
 
         # search nearest point
         mse = 0
-        distances, indices = nbrs.kneighbors(compressed)
-        mse = np.mean(np.square(distances[:, 0]))
+        _, indices = nbrs.kneighbors(compressed)
+        distances = np.zeros((len(indices), 1))
+        for i in range(len(indices)):
+            distances[i] = np.linalg.norm(original[indices[i][0]] - compressed[i])
+        mse = np.mean(np.square(distances))
 
         # calculate MSE
         # mse /= len(x_value)+len(y_value)+len(z_value)
