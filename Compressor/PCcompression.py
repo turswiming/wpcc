@@ -33,54 +33,54 @@ from getScaleParameter import getScaleParameter as gsp
 from sklearn.neighbors import NearestNeighbors
 import numpy as np
 import Compressor.framewidthTable as fwt
+from bitarray import bitarray
 
 x_real_original_global = np.array([])
 
 
 class PCcompression:
-    def __init__(self, *args, **kwargs):
-        """
-        Initialize the MyClass object. This constructor can handle two different sets of parameters.
-
-        Parameters:
-        compressedDir (str): Directory where compressed files are stored. If provided, other parameters should be None.
-        frame_size (int): Size of the frame. Must be even. If provided, compressedDir should be None.
-        compression_value (float): Compression value. Required if frame_size is provided.
-        dodownsample (bool): Flag to indicate if downsampling should be done. Default is False.
-        visualize (bool): Flag to indicate if visualization is needed. Default is False.
-        use8bit (bool): Flag to indicate if 8-bit processing should be used. Default is False.
-        """
-        if len(args) == 1 and isinstance(args[0], str):
-            # Initialize with compressedDir
-            self.compressedDir = args[0]
-            self.frame_size = None
-            self.compression_value = None
-            self.dodownsample = False
-            self.visualize = False
-            self.use8bit = False
-        elif len(args) >= 2 and isinstance(args[0], int) and isinstance(args[1], int):
-            # Initialize with frame_size and compression_value
-            frame_size = args[0]
-            if frame_size % 2 != 0:
-                raise ValueError("frame_size should be even")
-            fwtable = fwt.FrameSizeTable()
-            compression_value = args[1]
-            # if frame_size not in fwtable.get_frame_sizes(compression_value):
-            #     print("frame_size: ", frame_size, " is not suggested, please use the following frame sizes: ",
-            #           fwtable.get_frame_sizes(compression_value))
-            #     print("frame_size will be set to", fwtable.get_frame_sizes(compression_value)[0],
-            #           " automatically this time")
-            #     self.frame_size = fwtable.get_frame_sizes(compression_value)[0]
-            # else:
-            self.frame_size = frame_size
-            self.compression_value = compression_value
-            self.dodownsample = args[2] if len(args) >= 3 else False
-            self.visualize = args[3] if len(args) >= 4 else False
-            self.use8bit = args[4] if len(args) >= 5 else False
-            self.tiny = 10000
-            self.threshold = 0.005
+    def __init__(self,
+                 frame_size,
+                 compression_value,
+                 highres_rate=0.1,
+                 Ocbit_threshold=1/255,
+                 overlap_size = 0,
+                 dodownsample=False,
+                 visualize=False,
+                 use8bit=False) -> None:
+        if frame_size % 2 != 0:
+            raise ValueError("frame_size should be even")
+        fwtable = fwt.FrameSizeTable()
+        # if frame_size not in fwtable.get_frame_sizes(compression_value):
+        #     print("frame_size: ", frame_size, " is not suggested, please use the following frame sizes: ",
+        #           fwtable.get_frame_sizes(compression_value))
+        #     print("frame_size will be set to", fwtable.get_frame_sizes(compression_value)[0],
+        #           " automatically this time")
+        #     self.frame_size = fwtable.get_frame_sizes(compression_value)[0]
+        # else:
+        self.frame_size = frame_size
+        self.compression_value = compression_value
+        self.overlap_size = overlap_size
+        self.dodownsample = dodownsample
+        if 0.0 <= highres_rate <= 1.0:
+            self.highres_rate = highres_rate
         else:
-            raise ValueError("Invalid arguments for MyClass initialization")
+            raise ValueError("highres_rate should be between 0.0 and 1.0")
+        # if edge_size *2 >=frame_size:
+        #     raise ValueError("edge_size should be smaller than frame_size/2")
+        # self.edge_size = edge_size
+        self.visualize = visualize
+        self.use8bit = use8bit
+        self.tiny = 10000
+        self.Ocbit_threshold = Ocbit_threshold
+        pass
+
+    def __calc_diff(self, image):
+        # calculate the difference along vertical direction
+        diff = np.diff(image, axis=0)
+        # record the initial value
+        initial_value = image[0]
+        return initial_value, diff
 
     def __dft(self, x):
         """
@@ -98,7 +98,7 @@ class PCcompression:
         e = np.exp(-2j * np.pi * k * n / N)
         return np.dot(e, x)
 
-    def __get_min_max(self, image, width, height):
+    def get_min_max(self, image, width, height):
         min = np.zeros((math.ceil(image.shape[0] / width), math.ceil(image.shape[1] / height)))
         max = np.zeros((math.ceil(image.shape[0] / width), math.ceil(image.shape[1] / height)))
         for i in range(0, image.shape[0], width):
@@ -107,49 +107,49 @@ class PCcompression:
                 max[int(i / width), int(j / height)] = np.max(image[i:i + width, j:j + height])
         return min, max
 
-    def __sintransform(self, image, level):
+    def sintransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.sin(image * 3.1415926 / 2)
-            return self.__sintransform(image, level - 1)
+            return self.sintransform(image, level - 1)
 
-    def __arcsintransform(self, image, level):
+    def arcsintransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.arcsin(image) / (3.1415926 / 2)
-            return self.__arcsintransform(image, level - 1)
+            return self.arcsintransform(image, level - 1)
 
-    def __arctantransform(self, image, level):
+    def arctantransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.arctan(image / (3.1415926 / 2))
-            return self.__arctantransform(image, level - 1)
+            return self.arctantransform(image, level - 1)
 
-    def __tantransform(self, image, level):
+    def tantransform(self, image, level):
         if level == 0:
             return image
         else:
             image = np.tan(image) * 3.1415926 / 2
-            return self.__tantransform(image, level - 1)
+            return self.tantransform(image, level - 1)
 
-    def __UnuniQuantize(self, image: np.array, level: float):
-        # return self.__arcsintransform(image, level)
-        return self.__arctantransform(image, level)
+    def UnuniQuantize(self, image: np.array, level: float):
+        # return self.arcsintransform(image, level)
+        # return self.arctantransform(image, level)
         return np.arctan(image * level) * 2 / 3.1415926
-        return self.__sintransform(image, level)
+        return self.sintransform(image, level)
         pass
 
-    def __unpackUnuniQuantize(self, image: np.array, level: float):
-        # return self.__sintransform(image, level)
-        return self.__tantransform(image, level)
+    def unpackUnuniQuantize(self, image: np.array, level: float):
+        # return self.sintransform(image, level)
+        # return self.tantransform(image, level)
         return np.tan((image) * 3.1415926 / 2) / level
-        return self.__arcsintransform(image, level)
+        return self.arcsintransform(image, level)
         pass
 
-    def __genlowPrecisionPic(self, image: np.array, threshold: float):
+    def genlowPrecisionPic(self, image: np.array, threshold: float):
 
         mask = (image > -threshold) & (image < threshold)
         print("mask: ", mask[mask == True].shape)
@@ -157,36 +157,39 @@ class PCcompression:
         image_clamped = np.clip(image, -threshold, threshold)
         image_scaled = image_clamped / threshold
 
+        image_scaled = image_clamped / threshold
+
         mask_line = mask.reshape(-1)
         false_indices = np.where(mask_line == False)[0]
         return image_scaled, false_indices
 
-    def __rebuildHighPrecisionPic(self, lowPrecisionPic: np.array, highPrecisionNumbers: np.array, mask_line: np.array,
-                                  threshold: float):
+    def rebuildHighPrecisionPic(self, lowPrecisionPic: np.array, highPrecisionNumbers: np.array, mask_line: np.array,
+                                threshold: float):
         image = lowPrecisionPic * threshold
         for index in range(mask_line.shape[0]):
             indices = mask_line[index]
             x = indices // image.shape[1]
             y = indices % image.shape[1]
             image[x, y] = highPrecisionNumbers[index]
+            x = indices // image.shape[1]
+            y = indices % image.shape[1]
+            image[x, y] = highPrecisionNumbers[index]
         return image
 
-    def __DCTProcess(self, value, channel_name) -> np.array:
+    def DCTProcess(self, value, channel_name) -> np.array:
         # 1.1 cliping
         x_frames = []
         for i in range(0, len(value), self.frame_size):
-            x_frames.append(value[i:i + self.frame_size])
+            x_frames.append(value[i:i + self.frame_size+self.overlap_size])
         # 1.2 DCT
         # apply DCT to each frame
         x_dct_frames = []
-        max_length = 0
         for frame in x_frames:
-            if len(frame) < self.frame_size:
+            if len(frame) < self.frame_size+self.overlap_size:
                 continue
             dct_result = dct(frame, norm='ortho')
             x_dct_frames.append(dct_result)
-            if len(dct_result) > max_length:
-                max_length = len(dct_result)
+
 
         x_dct_frames_array = np.array(x_dct_frames)
         real = np.zeros(x_dct_frames_array.shape)
@@ -199,112 +202,268 @@ class PCcompression:
             x_real_original_global = real
         return real
 
-    def __saveDCTFrames(self, savedir, data):
-        x_image = data["x_image"]
-        y_image = data["y_image"]
-        z_image = data["z_image"]
+    def __createContinuedBitmap(self, bitmap: np.array) -> np.array:
+        bitmap = bitmap.astype(np.float64)
+        #blur the bitmap
+        for i in range(1, bitmap.shape[0] - 1):
+            bitmap[i] = (bitmap[i - 1] + bitmap[i] + bitmap[i + 1]) / 3
+        #find the edge
+        edge = np.zeros(bitmap.shape[0])
+        for i in range(1, bitmap.shape[0] - 1):
+            edge[i] = abs(bitmap[i] - bitmap[i - 1])
+        #find the edge
+        edge = edge > 0.5
+        #find the edge
+        edge = edge.astype(np.float64)
+        #find the edge
+        for i in range(1, bitmap.shape[0] - 1):
+            if edge[i] == 1:
+                bitmap[i] = 1
+        bitmap = bitmap.astype(np.bool)
+        return bitmap
+
+
+    def saveDCTFrames(self, savedir, x_image, y_image, z_image):
+        global combined_image
         combined_image = np.stack((x_image, y_image, z_image), axis=-1)
-        combined_image = combined_image.astype(np.float64)
-        max_values = np.max(combined_image)
-        min_values = np.min(combined_image)
-        print("max_values: ", max_values)
-        print("min_values: ", min_values)
-        combined_image = combined_image / max(abs(max_values), abs(min_values))
-        test = np.asarray(
-            [-1, -0.9, -0.8, -0.7, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9,
-             1])
-        test = self.__UnuniQuantize(test, 50)
-        combined_image = combined_image * 0.5 + 0.5
-        plt.plot(test)
-        plt.show()
-        plt.close()
-        if self.use8bit:
-            combined_image = (combined_image * 255)
-        else:
-            combined_image = (combined_image * 65535)
-        if self.use8bit:
-            combined_image = combined_image.astype(np.uint8)
-        else:
-            combined_image = combined_image.astype(np.uint16)
-        # pil_image = Image.fromarray(combined_image)
-        jp2_filename = "{}/dct_frames.jp2".format(savedir)
-        tile_size = (min(64, combined_image.shape[0]), min(64, combined_image.shape[1]))
-        jp2 = glymur.Jp2k(
-            jp2_filename,
-            data=combined_image,
-            numres=1,
-            cratios=[self.compression_value],
-            tilesize=tile_size,
-            display_resolution=None,
-            modesw=1,
-            mct=False,
-            # remove unused markers
-            eph=False,
-            plt=False,
-            sop=False,
-            tlm=False,
-        )
+
+        highres_size = int(self.highres_rate * (self.frame_size+self.overlap_size))
         metadata = {}
-        metadata["max_values"] = max_values
-        metadata["min_values"] = min_values
+
+        if highres_size != 0:
+            highres_img = combined_image[:, :highres_size, :]
+            highres_max_values = np.max(highres_img)
+            highres_min_values = np.min(highres_img)
+            highres_img = highres_img / max(abs(highres_max_values), abs(highres_min_values))
+            highres_img = self.UnuniQuantize(highres_img, 10)
+            highres_img = (highres_img + 1) / 2
+
+            highres_img = (highres_img * 65535)
+            highres_img = highres_img.astype(np.uint16)
+
+            jp2_filename = "{}/dct_frames_left.jp2".format(savedir)
+            tile_size = (highres_img.shape[0],  highres_img.shape[1])
+            jp2 = glymur.Jp2k(
+                jp2_filename,
+                data=highres_img,
+                numres=1,
+                cratios=(self.compression_value,),
+                tilesize=tile_size,
+                display_resolution=None,
+                modesw=1,
+                mct=False,
+                # remove unused markers
+                eph=False,
+                plt=False,
+                sop=False,
+                tlm=False,
+            )
+            metadata["highres_max_values"] = highres_max_values
+            metadata["highres_min_values"] = highres_min_values
+
+        if highres_size != (self.frame_size+self.overlap_size):
+            lowres_img = combined_image[:, highres_size:, :]
+            lowres_max_values = np.max(lowres_img)
+            lowres_min_values = np.min(lowres_img)
+            lowres_img = lowres_img / max(abs(lowres_max_values), abs(lowres_min_values))
+            rightside = lowres_img[:, int(lowres_img.shape[1]/2):]
+            rightside_max = np.max(rightside)
+            rightside_min = np.min(rightside)
+            threshold = max(abs(rightside_max), abs(rightside_min)) * self.Ocbit_threshold
+            dif_indices = np.where((rightside > threshold) | (rightside < -threshold))
+            bitmap = np.zeros(rightside.shape[0])
+            for i in range(dif_indices[0].shape[0]):
+                bitmap[dif_indices[0][i]] = 1
+            bitmap = bitmap.astype(np.bool)
+            bitmap = self.__createContinuedBitmap(bitmap)
+            unkey_img = lowres_img[bitmap]
+            unkey_img = (unkey_img + 1) / 2
+            unkey_img = (unkey_img * 65535)
+            unkey_img = unkey_img.astype(np.uint16)
+            jp2_filename = "{}/dct_frames_right.jp2".format(savedir)
+            tile_size = (unkey_img.shape[0], unkey_img.shape[1])
+            if unkey_img.shape[0] != 0:
+                jp2 = glymur.Jp2k(
+                    jp2_filename,
+                    data=unkey_img,
+                    numres=1,
+                    cratios=(self.compression_value,),
+                    tilesize=tile_size,
+                    display_resolution=None,
+                    modesw=1,
+                    mct=False,
+                    # remove unused markers
+                    eph=False,
+                    plt=False,
+                    sop=False,
+                    tlm=False,
+                )
+            # reverse bitmap
+            bitmap = np.logical_not(bitmap)
+            bitmap_new = bitmap
+            bitmap_new = bitmap_new.astype(np.bool)
+            key_img = lowres_img[bitmap_new]
+            key_img = (key_img + 1) / 2
+            key_img = (key_img * 65535)
+            key_img = key_img.astype(np.uint16)
+            tile_size = (key_img.shape[0], key_img.shape[1])
+            jp2_filename = "{}/dct_frames_right_key.jp2".format(savedir)
+            if key_img.shape[0] != 0:
+                jp2 = glymur.Jp2k(
+                    jp2_filename,
+                    data=key_img,
+                    numres=1,
+                    cratios=(self.compression_value*2,),
+                    tilesize=tile_size,
+                    display_resolution=None,
+                    modesw=1,
+                    mct=False,
+                    # remove unused markers
+                    eph=False,
+                    plt=False,
+                    sop=False,
+                    tlm=False,
+                )
+            print("Saved bitmap", bitmap_new.shape)
+            bit_arr = bitarray(bitmap_new.tolist())
+            self.__saveBitArray(bit_arr, "{}/bitmap.bin".format(savedir))
+            metadata["lowres_max_values"] = lowres_max_values
+            metadata["lowres_min_values"] = lowres_min_values
+            metadata["bitarraysize"] = bitmap_new.shape[0]
+
         metadata["Downsample"] = 1 if self.dodownsample else 0
+        metadata["FrameSize"] = self.frame_size
+        metadata["overlapSize"] = self.overlap_size
         with open("{}/metadata.json".format(savedir), "w") as f:
             json.dump(metadata, f)
         pass
 
-    def __readdata(self, savedir) -> np.array:
+    def __saveBitArray(self, bitarray: bitarray, path: str):
+        with open(path, "wb") as f:
+            bitarray.tofile(f)
+        pass
+
+    def readdata(self, savedir) -> np.array:
         with open("{}/metadata.json".format(savedir), "r") as f:
             metadata = json.load(f)
-        max_values = metadata["max_values"]
-        min_values = metadata["min_values"]
 
-        jp2k = glymur.Jp2k("{}/dct_frames.jp2".format(savedir))
-        real_image = jp2k[:]
-        real_image = real_image.astype(np.float64)
-
-        if self.use8bit:
-            real_image = ((real_image) / 255)
-        else:
+        if "highres_max_values" in metadata:
+            max_values = metadata["highres_max_values"]
+            min_values = metadata["highres_min_values"]
+            jp2k = glymur.Jp2k("{}/dct_frames_left.jp2".format(savedir))
+            real_image = jp2k[:]
+            real_image = real_image.astype(np.float64)
             real_image = ((real_image) / 65535)
-        real_image = real_image * 2 - 1
 
-        real_image = real_image * max(abs(max_values), abs(min_values))
+            real_image = real_image * 2 - 1
+            real_image = self.unpackUnuniQuantize(real_image, 10)
+
+            real_image = real_image * max(abs(max_values), abs(min_values))
+            highres_img = real_image
+        if "lowres_max_values" in metadata:
+            max_values = metadata["lowres_max_values"]
+            min_values = metadata["lowres_min_values"]
+            bitarraysize = metadata["bitarraysize"]
+            if os.path.exists("{}/dct_frames_right.jp2".format(savedir)):
+                jp2k_diff = glymur.Jp2k(
+                    "{}/dct_frames_right.jp2".format(savedir),
+                )
+                dif = jp2k_diff[:]
+                dif = dif.astype(np.float64)
+                dif = ((dif) / 65535)
+                dif = dif * 2 - 1
+                # dif = ((dif) * self.Ocbit_threshold)
+                wide = dif.shape[1]
+            if os.path.exists("{}/dct_frames_right_key.jp2".format(savedir)):
+                jp2k_key = glymur.Jp2k(
+                    "{}/dct_frames_right_key.jp2".format(savedir),
+                )
+                key_image = jp2k_key[:]
+                key_image = key_image.astype(np.float64)
+                key_image = ((key_image) / 65535)
+                key_image = key_image * 2 - 1
+                wide = key_image.shape[1]
+
+            loaded_bit_arr = bitarray()
+            with open("{}/bitmap.bin".format(savedir), "rb") as f:
+                loaded_bit_arr.fromfile(f)
+            bitmap = np.array(loaded_bit_arr.tolist(), dtype=bool)
+            bitmap = bitmap[:bitarraysize]
+
+            final_image = np.zeros((bitmap.shape[0], wide, 3))
+
+            key_image_index = 0
+            diff_image_index = 0
+            for i in range(bitmap.shape[0]):
+                if bitmap[i] == True:
+                    final_image[i] = key_image[key_image_index]
+                    key_image_index += 1
+                if bitmap[i] == False:
+                    final_image[i] = dif[diff_image_index]
+                    diff_image_index += 1
+            final_image = final_image * max(abs(max_values), abs(min_values))
+
+            lowres_img = final_image
+        if "highres_max_values" in metadata and "lowres_max_values" in metadata:
+            real_image = np.concatenate((highres_img, lowres_img), axis=1)
+        elif "highres_max_values" in metadata:
+            real_image = highres_img
+        else:
+            real_image = lowres_img
+
         return real_image[:, :, 0], real_image[:, :, 1], real_image[:, :, 2], metadata
 
         # reconstruct the original DCT frames
 
-    def __IDCTProcess(self, real_image, channel_name):
-        # if channel_name == "x":
-        #     global x_real_original_global
-        #     global x_imag_original_global
+    def IDCTProcess(self, real_image, channel_name,overlap_size) -> np.array:
+        if channel_name == "x":
+            # global combined_image
 
-        #     realdiff = x_imag_original_global - imag_image
-        #     plt.imshow(realdiff)
-        #     plt.show()
-        #     plt.close()
-        #     x_imag_original_global = imag_image
+            # realdiff = combined_image[:,:,0] - real_image
+            # plt.plot(real_image[1])
+            # plt.plot(combined_image[1,:,0])
+            # # plt.imshow(realdiff[:50,:])
+            # plt.show()
+            # plt.close()
+            x_imag_original_global = real_image
 
         x_reconstructed_frames = []
-        for dct_frame in real_image:
+        for id ,dct_frame in enumerate(real_image):
             original_frame = idct(dct_frame, norm='ortho')  # 使用逆DCT并采用正交归一化
-
             x_reconstructed_frames.append(original_frame)
 
-        series = np.asarray(x_reconstructed_frames)
+        overlap_frames = np.asarray(x_reconstructed_frames)
+        if overlap_size == 0:
+            series = overlap_frames.reshape(-1)
+            return series
+        series = overlap_frames[:, :-overlap_size]
+        for i in range(1, series.shape[0]):
+            for j in range(overlap_size):
+                a = overlap_frames[i - 1, -overlap_size + j]
+                b = series[i, j]
+                distance = float(abs(a - b))
+                series[i, j] = a * (j / overlap_size) + b * (1 - j / overlap_size)
+
+
         series = series.reshape(-1)
         return series
 
-    def __calculate_psnr(self, original, compressed):
+    def calculate_psnr(self, original, compressed):
         x_value = original[:, 0]
         y_value = original[:, 1]
         z_value = original[:, 2]
         # build point cloud
+        # build point cloud
         nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(original)
 
         # search nearest point
+        # search nearest point
         mse = 0
-        distances, indices = nbrs.kneighbors(compressed)
-        mse = np.mean(distances[:, 0])
+        _, indices = nbrs.kneighbors(compressed)
+        distances = np.zeros((len(indices), 1))
+        for i in range(len(indices)):
+            distances[i] = np.linalg.norm(original[indices[i][0]] - compressed[i])
+        mse = np.mean(np.square(distances))
 
         # calculate MSE
         # mse /= len(x_value)+len(y_value)+len(z_value)
@@ -314,22 +473,30 @@ class PCcompression:
         max_range = pow(pow(x_range, 2) + pow(y_range, 2) + pow(z_range, 2), 0.5)
 
         psnr = 10 * np.log10(pow(max_range, 2) / mse)
+        x_range = np.max(x_value) - np.min(x_value)
+        y_range = np.max(y_value) - np.min(y_value)
+        z_range = np.max(z_value) - np.min(z_value)
+        max_range = pow(pow(x_range, 2) + pow(y_range, 2) + pow(z_range, 2), 0.5)
+
+        psnr = 10 * np.log10(pow(max_range, 2) / mse)
         return psnr
 
-    def __downsample(self, x, y, z):
+    def downsample(self, x, y, z):
         x_down = np.zeros(len(x) // 2)
         x_down = x[::2]
         y_down = np.zeros(len(y) // 2)
+        y_down = np.zeros(len(y) // 2)
         y_down = y[::2]
+        z_down = np.zeros(len(z) // 2)
         z_down = np.zeros(len(z) // 2)
         z_down = z[::2]
         return x_down, y_down, z_down
 
-    def __disance(self, a, b):
-        return pow(pow(a[0] - b[0], 2) + pow(a[1] - b[1], 2) + pow(a[2] - b[2], 2), 0.5)
-
-    def __upsample(self, x, y, z):
+    def upsample(self, x, y, z):
         assert x.shape == y.shape == z.shape
+        x_up = np.zeros(len(x) * 2)
+        y_up = np.zeros(len(y) * 2)
+        z_up = np.zeros(len(z) * 2)
         x_up = np.zeros(len(x) * 2)
         y_up = np.zeros(len(y) * 2)
         z_up = np.zeros(len(z) * 2)
@@ -337,26 +504,9 @@ class PCcompression:
         y_up[::2] = y
         z_up[::2] = z
         for i in range(1, len(x_up) - 1, 2):
-
-            if (i - 3 < 0):
-                x_up[i] = (x_up[i - 1] + x_up[i + 1]) / 2
-                y_up[i] = (y_up[i - 1] + y_up[i + 1]) / 2
-                z_up[i] = (z_up[i - 1] + z_up[i + 1]) / 2
-                continue
-            if (i + 3 >= len(x_up) - 1):
-                x_up[i] = x_up[i - 1]
-                y_up[i] = y_up[i - 1]
-                z_up[i] = z_up[i - 1]
-                continue
-
-            left = np.array([x_up[i - 1], y_up[i - 1], z_up[i - 1]])
-            right = np.array([x_up[i + 1], y_up[i + 1], z_up[i + 1]])
-            distance_2 = self.__disance(left, right)
-            leftleft = np.array([x_up[i - 3], y_up[i - 3], z_up[i - 3]])
-            rightright = np.array([x_up[i + 3], y_up[i + 3], z_up[i + 3]])
-            distance_4 = self.__disance(leftleft, rightright)
-
-            if distance_2 * 1.1 > distance_4:
+            distance = abs(x_up[i - 1] - x_up[i + 1]) + abs(y_up[i - 1] - y_up[i + 1]) + abs(
+                z_up[i - 1] - z_up[i + 1])
+            if distance > 0.01:
                 x_up[i] = x_up[i - 1]
                 y_up[i] = y_up[i - 1]
                 z_up[i] = z_up[i - 1]
@@ -364,68 +514,56 @@ class PCcompression:
                 x_up[i] = (x_up[i - 1] + x_up[i + 1]) / 2
                 y_up[i] = (y_up[i - 1] + y_up[i + 1]) / 2
                 z_up[i] = (z_up[i - 1] + z_up[i + 1]) / 2
+                x_up[i] = (x_up[i - 1] + x_up[i + 1]) / 2
+                y_up[i] = (y_up[i - 1] + y_up[i + 1]) / 2
+                z_up[i] = (z_up[i - 1] + z_up[i + 1]) / 2
         return x_up, y_up, z_up
 
-    def compress(self, filename, savedir):
-        return self.__compress(filename, savedir)
+    def pc2mp3(self, filename, savedir):
 
-    def __compress(self, filename, savedir):
-        self.compressedDir = savedir
         pcd = o3d.io.read_point_cloud(filename)
         np_pcd = np.asarray(pcd.points)
         x_value = np_pcd[:, 0]
         y_value = np_pcd[:, 1]
         z_value = np_pcd[:, 2]
         # remove this dir
+        z_value = np_pcd[:, 2]
+        # remove this dir
         if os.path.exists(savedir):
             for file in os.listdir(savedir):
+                os.remove("{}/".format(savedir) + file)
+
                 os.remove("{}/".format(savedir) + file)
 
         if not os.path.exists(savedir):
             os.makedirs(savedir)
         if self.dodownsample:
-            x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
+            x_value, y_value, z_value = self.downsample(x_value, y_value, z_value)
         # spilct x_value to frames, each frames has frame_size samples
-        x_image = self.__DCTProcess(x_value, "x")
-        y_image = self.__DCTProcess(y_value, "y")
-        z_image = self.__DCTProcess(z_value, "z")
+        x_image = self.DCTProcess(x_value, "x")
+        y_image = self.DCTProcess(y_value, "y")
+        z_image = self.DCTProcess(z_value, "z")
         # save DCT frames
-        data = {}
-        data["x_image"] = x_image
-        data["y_image"] = y_image
-        data["z_image"] = z_image
-        self.__saveDCTFrames(savedir, data)
-        return x_value, y_value, z_value
+        self.saveDCTFrames(savedir, x_image, y_image, z_image)
+        # ---------------------------------------------------------
+        # above is saver
 
-    def decompress(self, savepath):
-        self.__decompress(savepath)
-        pass
+        # here is reader
+        # ---------------------------------------------------------
 
-    def __decompress(self, savepath):
-        x_read_image, y_read_image, z_read_image, metadata = self.__readdata(self.compressedDir)
-        x_readed = self.__IDCTProcess(x_read_image, "x")
-        y_readed = self.__IDCTProcess(y_read_image, "y")
-        z_readed = self.__IDCTProcess(z_read_image, "z")
+        x_read_image, y_read_image, z_read_image, metadata = self.readdata(savedir)
+        x_readed = self.IDCTProcess(x_read_image, "x",metadata["overlapSize"])
+        y_readed = self.IDCTProcess(y_read_image, "y",metadata["overlapSize"])
+        z_readed = self.IDCTProcess(z_read_image, "z",metadata["overlapSize"])
         if metadata["Downsample"] == 1:
-            x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
+            x_readed, y_readed, z_readed = self.upsample(x_readed, y_readed, z_readed)
 
         pc = np.stack((x_readed, y_readed, z_readed), axis=-1)
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(pc)
         if self.visualize:
             o3d.visualization.draw_geometries([pcd])
-        o3d.io.write_point_cloud(savepath, pcd)
-        return x_readed, y_readed, z_readed, pcd
-
-    def pc2mp3(self, filename, savedir):
-        x_value, y_value, z_value = self.__compress(filename, savedir)
-        # ---------------------------------------------------------
-        # above is saver
-
-        # here is reader
-        # ---------------------------------------------------------
-        x_readed, y_readed, z_readed, pcd = self.__decompress("{}/saved_point_cloud.ply".format(savedir))
-
+        o3d.io.write_point_cloud("{}/saved_point_cloud.ply".format(savedir), pcd)
         # calculate compression ratio
         compression_size = 0
         for file in os.listdir("{}/".format(savedir)):
@@ -437,55 +575,11 @@ class PCcompression:
         print("compression size: ", compression_size)
         print("compression ratio: ", original_size / compression_size)
 
+        print("compression ratio: ", original_size / compression_size)
+
         origin = np.stack((x_value, y_value, z_value), axis=-1)
         readed = np.stack((x_readed, y_readed, z_readed), axis=-1)
-        psnr = self.__calculate_psnr(origin, readed)
+        psnr = self.calculate_psnr(origin, readed)
+        print("BPP: ", 8 * compression_size / x_readed.shape[0])
         print("PSNR: ", psnr)
         return original_size / compression_size, psnr
-
-
-def __calc_diff(image):
-    # calculate the difference along vertical direction
-    diff = np.diff(image, axis=0)
-    # record the initial value
-    initial_value = image[0]
-    return initial_value, diff
-
-
-def __img_compress(image, threshold, max_interval):
-    initial_value, diff = __calc_diff(image)
-    # find the rows where the difference is larger than the threshold
-    key_rows = np.where(np.max(np.abs(diff), axis=1) > threshold)[0] + 1
-    # if there are too many rows without a key row, add a key row
-    intervals = np.diff(key_rows, prepend=0)
-    too_long_intervals = np.where(intervals > max_interval)[0]
-    for i in reversed(too_long_intervals):
-        new_key_row = key_rows[i] + max_interval // 2
-        key_rows = np.insert(key_rows, i + 1, new_key_row)
-    # store the key_rows_data separately
-    key_rows_data = image[key_rows] - image[key_rows - 1]
-    diff[key_rows - 1] = 0
-    # record the initial value, key_rows_data, and the differences
-    compressed_data = {'initial_value': initial_value, 'diff': diff, 'key_rows': key_rows,
-                       'key_rows_data': key_rows_data}
-    return compressed_data
-
-
-def __img_decompress(compressed_data):
-    initial_value = compressed_data['initial_value']
-    diff = compressed_data['diff']
-    key_rows = compressed_data['key_rows']
-    key_rows_data = compressed_data['key_rows_data']
-    # reconstruct the image from the differences, key_rows_data, and the initial value
-    image = np.empty_like(diff)
-    image[0] = initial_value
-    for i, key_row in enumerate(key_rows):
-        if i == 0:
-            image[:key_row] = np.cumsum(diff[:key_row], axis=0) + initial_value
-        else:
-            image[key_rows[i - 1]:key_row] = np.cumsum(diff[key_rows[i - 1]:key_row], axis=0) + image[
-                key_rows[i - 1] - 1]
-        # add the key_rows_data back to the corresponding row
-        image[key_row - 1] += key_rows_data[i]
-    image[key_rows[-1]:] = np.cumsum(diff[key_rows[-1]:], axis=0) + image[key_rows[-1] - 1]
-    return image
