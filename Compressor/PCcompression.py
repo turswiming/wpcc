@@ -7,13 +7,18 @@ The main function is pc2mp3, which takes a path of a point cloud file as input, 
 
 usage:
 
-    pcc = PCcompression(16, 1, dodownsample=True, visualize=True, use8bit=False)
-    pcc.compress("./path/to/point/cloud", "./data_output/01_save")
-    pcc.pc2mp3("./path/to/compressed_directory")
-    #and the compression ratio and PSNR will be printed.
-
-    pcc2 = PCcompression("./data_output/01_save")
-    pcc2.decompress("./data_output/01_save/01.ply")
+    pcc = PCcompression(32,1,0,10/10,0,True, True, False)
+    pcc.pc2mp3(path, "./data_output/01_save")
+    params:
+        self,
+        frame_size,
+        compression_value,
+        highres_rate=0,
+        Ocbit_threshold=1/10, 
+        overlap_size = 0,
+        dodownsample=False,
+        visualize=False,
+        use8bit=False
     
 """
 
@@ -42,8 +47,8 @@ class PCcompression:
     def __init__(self,
                  frame_size,
                  compression_value,
-                 highres_rate=0.1,
-                 Ocbit_threshold=1/255,
+                 highres_rate=0,
+                 Ocbit_threshold=1/10,
                  overlap_size = 0,
                  dodownsample=False,
                  visualize=False,
