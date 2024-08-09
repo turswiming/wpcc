@@ -207,18 +207,14 @@ class PCcompression:
         #blur the bitmap
         for i in range(1, bitmap.shape[0] - 1):
             bitmap[i] = (bitmap[i - 1] + bitmap[i] + bitmap[i + 1]) / 3
-        #find the edge
-        edge = np.zeros(bitmap.shape[0])
-        for i in range(1, bitmap.shape[0] - 1):
-            edge[i] = abs(bitmap[i] - bitmap[i - 1])
-        #find the edge
-        edge = edge > 0.5
-        #find the edge
-        edge = edge.astype(np.float64)
-        #find the edge
-        for i in range(1, bitmap.shape[0] - 1):
-            if edge[i] == 1:
-                bitmap[i] = 1
+        bitmap[1] = (bitmap[0] + bitmap[1] + bitmap[2]) / 3
+        bitmap[bitmap.shape[0] - 2] = (bitmap[bitmap.shape[0] - 3] + bitmap[bitmap.shape[0] - 2] + bitmap[bitmap.shape[0] - 1]) / 3
+        
+        new_bitmap = np.zeros(bitmap.shape[0])
+        for i in range(bitmap.shape[0]):
+            if bitmap[i] >0.5:
+                new_bitmap[i] = 1
+        
         bitmap = bitmap.astype(np.bool)
         return bitmap
 
@@ -265,17 +261,25 @@ class PCcompression:
             lowres_img = combined_image[:, highres_size:, :]
             lowres_max_values = np.max(lowres_img)
             lowres_min_values = np.min(lowres_img)
+            normal_lowres_img = np.copy(lowres_img)
+            for i in range(lowres_img.shape[0]):
+                line_max = np.max(lowres_img[i])
+                line_min = np.min(lowres_img[i])
+                normal_lowres_img[i] = lowres_img[i] / max(abs(line_max), abs(line_min))
+                
             lowres_img = lowres_img / max(abs(lowres_max_values), abs(lowres_min_values))
-            rightside = lowres_img[:, int(lowres_img.shape[1]/2):]
-            rightside_max = np.max(rightside)
-            rightside_min = np.min(rightside)
-            threshold = max(abs(rightside_max), abs(rightside_min)) * self.Ocbit_threshold
-            dif_indices = np.where((rightside > threshold) | (rightside < -threshold))
-            bitmap = np.zeros(rightside.shape[0])
+            normal_lowres_img = normal_lowres_img[:,int(normal_lowres_img.shape[1]/2):,:]
+
+            threshold = np.max(normal_lowres_img)*self.Ocbit_threshold
+            dif_indices = np.where((normal_lowres_img > threshold) | (normal_lowres_img < -threshold))
+            bitmap = np.zeros(normal_lowres_img.shape[0])
             for i in range(dif_indices[0].shape[0]):
                 bitmap[dif_indices[0][i]] = 1
             bitmap = bitmap.astype(np.bool)
             bitmap = self.__createContinuedBitmap(bitmap)
+            print("bitmap shape: ", bitmap.shape)
+            print("true: ", bitmap[bitmap == True].shape)
+            print("false: ", bitmap[bitmap == False].shape)
             unkey_img = lowres_img[bitmap]
             unkey_img = (unkey_img + 1) / 2
             unkey_img = (unkey_img * 65535)
@@ -307,7 +311,7 @@ class PCcompression:
             key_img = (key_img * 65535)
             key_img = key_img.astype(np.uint16)
             tile_size = (key_img.shape[0], key_img.shape[1])
-            jp2_filename = "{}/dct_frames_right_key.jp2".format(savedir)
+            jp2_filename = "{}/dct_frames_right_low.jp2".format(savedir)
             if key_img.shape[0] != 0:
                 jp2 = glymur.Jp2k(
                     jp2_filename,
@@ -365,24 +369,24 @@ class PCcompression:
             min_values = metadata["lowres_min_values"]
             bitarraysize = metadata["bitarraysize"]
             if os.path.exists("{}/dct_frames_right.jp2".format(savedir)):
-                jp2k_diff = glymur.Jp2k(
+                jp2k_high = glymur.Jp2k(
                     "{}/dct_frames_right.jp2".format(savedir),
                 )
-                dif = jp2k_diff[:]
-                dif = dif.astype(np.float64)
-                dif = ((dif) / 65535)
-                dif = dif * 2 - 1
+                high_image = jp2k_high[:]
+                high_image = high_image.astype(np.float64)
+                high_image = ((high_image) / 65535)
+                high_image = high_image * 2 - 1
                 # dif = ((dif) * self.Ocbit_threshold)
-                wide = dif.shape[1]
-            if os.path.exists("{}/dct_frames_right_key.jp2".format(savedir)):
-                jp2k_key = glymur.Jp2k(
-                    "{}/dct_frames_right_key.jp2".format(savedir),
+                wide = high_image.shape[1]
+            if os.path.exists("{}/dct_frames_right_low.jp2".format(savedir)):
+                jp2k_low = glymur.Jp2k(
+                    "{}/dct_frames_right_low.jp2".format(savedir),
                 )
-                key_image = jp2k_key[:]
-                key_image = key_image.astype(np.float64)
-                key_image = ((key_image) / 65535)
-                key_image = key_image * 2 - 1
-                wide = key_image.shape[1]
+                low_image = jp2k_low[:]
+                low_image = low_image.astype(np.float64)
+                low_image = ((low_image) / 65535)
+                low_image = low_image * 2 - 1
+                wide = low_image.shape[1]
 
             loaded_bit_arr = bitarray()
             with open("{}/bitmap.bin".format(savedir), "rb") as f:
@@ -396,11 +400,12 @@ class PCcompression:
             diff_image_index = 0
             for i in range(bitmap.shape[0]):
                 if bitmap[i] == True:
-                    final_image[i] = key_image[key_image_index]
+                    final_image[i] = low_image[key_image_index]
                     key_image_index += 1
                 if bitmap[i] == False:
-                    final_image[i] = dif[diff_image_index]
+                    final_image[i] = high_image[diff_image_index]
                     diff_image_index += 1
+                        
             final_image = final_image * max(abs(max_values), abs(min_values))
 
             lowres_img = final_image
@@ -533,8 +538,6 @@ class PCcompression:
             for file in os.listdir(savedir):
                 os.remove("{}/".format(savedir) + file)
 
-                os.remove("{}/".format(savedir) + file)
-
         if not os.path.exists(savedir):
             os.makedirs(savedir)
         if self.dodownsample:
@@ -575,11 +578,9 @@ class PCcompression:
         print("compression size: ", compression_size)
         print("compression ratio: ", original_size / compression_size)
 
-        print("compression ratio: ", original_size / compression_size)
-
         origin = np.stack((x_value, y_value, z_value), axis=-1)
         readed = np.stack((x_readed, y_readed, z_readed), axis=-1)
         psnr = self.__calculate_psnr(origin, readed)
         print("BPP: ", 8 * compression_size / x_readed.shape[0])
         print("PSNR: ", psnr)
-        return original_size / compression_size, psnr
+        return 8 * compression_size / x_readed.shape[0], psnr
