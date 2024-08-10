@@ -41,7 +41,7 @@ import Compressor.framewidthTable as fwt
 from bitarray import bitarray
 
 x_real_original_global = np.array([])
-
+ununiQuantizeNum = 2
 
 class PCcompression:
     def __init__(self,
@@ -286,6 +286,7 @@ class PCcompression:
             print("true: ", bitmap[bitmap == True].shape)
             print("false: ", bitmap[bitmap == False].shape)
             unkey_img = lowres_img[bitmap]
+            unkey_img = self.__UnuniQuantize(unkey_img, ununiQuantizeNum)
             unkey_img = (unkey_img + 1) / 2
             unkey_img = (unkey_img * 65535)
             unkey_img = unkey_img.astype(np.uint16)
@@ -312,6 +313,7 @@ class PCcompression:
             bitmap_new = bitmap
             bitmap_new = bitmap_new.astype(np.bool)
             key_img = lowres_img[bitmap_new]
+            unkey_img = self.__UnuniQuantize(unkey_img, ununiQuantizeNum)
             key_img = (key_img + 1) / 2
             key_img = (key_img * 65535)
             key_img = key_img.astype(np.uint16)
@@ -410,7 +412,8 @@ class PCcompression:
                 if bitmap[i] == False:
                     final_image[i] = high_image[diff_image_index]
                     diff_image_index += 1
-                        
+            
+            final_image = self.__unpackUnuniQuantize(final_image, ununiQuantizeNum)
             final_image = final_image * max(abs(max_values), abs(min_values))
 
             lowres_img = final_image
