@@ -21,7 +21,7 @@ usage:
         use8bit=False
     
 """
-
+from pydub import AudioSegment
 import glymur
 import numpy as np
 from scipy.fftpack import dct
@@ -237,10 +237,67 @@ class PCcompression:
 
         if highres_size != 0:
             highres_img = combined_image[:, :highres_size, :]
-            highres_max_values = np.max(highres_img)
-            highres_min_values = np.min(highres_img)
-            highres_img = highres_img / max(abs(highres_max_values), abs(highres_min_values))
-            highres_img = self.__UnuniQuantize(highres_img, 10)
+            #get the max and min value of each line
+            max_line_x = np.max(highres_img[:,:,0], axis=1)
+            min_line_x = np.min(highres_img[:,:,0], axis=1)
+            max_line_y = np.max(highres_img[:,:,1], axis=1)
+            min_line_y = np.min(highres_img[:,:,1], axis=1)
+            max_line_z = np.max(highres_img[:,:,2], axis=1)
+            min_line_z = np.min(highres_img[:,:,2], axis=1)
+            scale_x = np.zeros((highres_img.shape[0], 1))
+            scale_y = np.zeros((highres_img.shape[0], 1))
+            scale_z = np.zeros((highres_img.shape[0], 1))
+            for i in range(highres_img.shape[0]):
+                scale_x[i] = max(abs(max_line_x[i]), abs(min_line_x[i]))
+                scale_y[i] = max(abs(max_line_y[i]), abs(min_line_y[i]))
+                scale_z[i] = max(abs(max_line_z[i]), abs(min_line_z[i]))
+            #normalize the image
+            for i in range(highres_img.shape[0]):
+                highres_img[i,:,0] = highres_img[i,:,0] / scale_x[i]
+                highres_img[i,:,1] = highres_img[i,:,1] / scale_y[i]
+                highres_img[i,:,2] = highres_img[i,:,2] / scale_z[i]
+            #save scale_x to music 
+            metadata["scale_x_max"] = np.max(scale_x)
+            metadata["scale_y_max"] = np.max(scale_y)
+            metadata["scale_z_max"] = np.max(scale_z)
+            scale_x = scale_x / np.max(scale_x)
+            scale_y = scale_y / np.max(scale_y)
+            scale_z = scale_z / np.max(scale_z)
+            scale_x = scale_x * 65535-32768
+            scale_x = scale_x.astype(np.int16)
+            scale_y = scale_y * 65535-32768
+            scale_y = scale_y.astype(np.int16)
+            scale_z = scale_z * 65535-32768
+            scale_z = scale_z.astype(np.int16)
+            scale_x_audio_data = scale_x.tobytes()
+            scale_y_audio_data = scale_y.tobytes()
+            scale_z_audio_data = scale_z.tobytes()
+            audio_segment = AudioSegment(
+                    data=scale_x_audio_data,
+                    sample_width=2,  # 采样宽度为2字节（16位）
+                    frame_rate=44100,  # 采样率为44100Hz
+                    channels=1  # 单声道
+                )
+            audio_segment.export("{}/scale_x.wav".format(savedir), format="wav")
+            audio_segment = AudioSegment(
+                    data=scale_y_audio_data,
+                    sample_width=2,  # 采样宽度为2字节（16位）
+                    frame_rate=44100,  # 采样率为44100Hz
+                    channels=1  # 单声道
+                )
+            audio_segment.export("{}/scale_y.wav".format(savedir), format="wav")
+            audio_segment = AudioSegment(
+                    data=scale_z_audio_data,
+                    sample_width=2,  # 采样宽度为2字节（16位）
+                    frame_rate=44100,  # 采样率为44100Hz
+                    channels=1  # 单声道
+                )
+            audio_segment.export("{}/scale_z.wav".format(savedir), format="wav")
+
+            # highres_max_values = np.max(highres_img)
+            # highres_min_values = np.min(highres_img)
+            # highres_img = highres_img / max(abs(highres_max_values), abs(highres_min_values))
+            highres_img = self.__UnuniQuantize(highres_img, 2)
             highres_img = (highres_img + 1) / 2
 
             highres_img = (highres_img * 65535)
@@ -263,8 +320,7 @@ class PCcompression:
                 sop=False,
                 tlm=False,
             )
-            metadata["highres_max_values"] = highres_max_values
-            metadata["highres_min_values"] = highres_min_values
+            
 
         if highres_size != (self.frame_size+self.overlap_size):
             lowres_img = combined_image[:, highres_size:, :]
@@ -292,8 +348,8 @@ class PCcompression:
             unkey_img = lowres_img[bitmap]
             unkey_img = self.__UnuniQuantize(unkey_img, ununiQuantizeNum)
             unkey_img = (unkey_img + 1) / 2
-            unkey_img = (unkey_img * 65535)
-            unkey_img = unkey_img.astype(np.uint16)
+            unkey_img = (unkey_img * 255)
+            unkey_img = unkey_img.astype(np.uint8)
             jp2_filename = "{}/dct_frames_right.jp2".format(savedir)
             tile_size = (unkey_img.shape[0], unkey_img.shape[1])
             if unkey_img.shape[0] != 0:
@@ -301,7 +357,7 @@ class PCcompression:
                     jp2_filename,
                     data=unkey_img,
                     numres=1,
-                    cratios=(self.compression_value,),
+                    cratios=(1,),
                     tilesize=tile_size,
                     display_resolution=None,
                     modesw=1,
@@ -362,18 +418,39 @@ class PCcompression:
         with open("{}/metadata.json".format(savedir), "r") as f:
             metadata = json.load(f)
 
-        if "highres_max_values" in metadata:
-            max_values = metadata["highres_max_values"]
-            min_values = metadata["highres_min_values"]
+        if "scale_x_max" in metadata:
+            scale_x_max = metadata["scale_x_max"]
+            scale_y_max = metadata["scale_y_max"]
+            scale_z_max = metadata["scale_z_max"]
+            audio = AudioSegment.from_file("{}/scale_x.wav".format(savedir))
+            scale_x = np.array(audio.get_array_of_samples())
+            audio = AudioSegment.from_file("{}/scale_y.wav".format(savedir))
+            scale_y = np.array(audio.get_array_of_samples())
+            audio = AudioSegment.from_file("{}/scale_z.wav".format(savedir))
+            scale_z = np.array(audio.get_array_of_samples())
+            scale_x = scale_x.astype(np.float64)
+            scale_y = scale_y.astype(np.float64)
+            scale_z = scale_z.astype(np.float64)
+            scale_x = (scale_x + 32768) / 65535
+            scale_y = (scale_y + 32768) / 65535
+            scale_z = (scale_z + 32768) / 65535
+            scale_x = scale_x * scale_x_max
+            scale_y = scale_y * scale_y_max
+            scale_z = scale_z * scale_z_max
+
+
+
             jp2k = glymur.Jp2k("{}/dct_frames_left.jp2".format(savedir))
             real_image = jp2k[:]
             real_image = real_image.astype(np.float64)
             real_image = ((real_image) / 65535)
 
             real_image = real_image * 2 - 1
-            real_image = self.__unpackUnuniQuantize(real_image, 10)
-
-            real_image = real_image * max(abs(max_values), abs(min_values))
+            real_image = self.__unpackUnuniQuantize(real_image, 2)
+            for i in range(real_image.shape[0]):
+                real_image[i,:,0] = real_image[i,:,0] * scale_x[i]
+                real_image[i,:,1] = real_image[i,:,1] * scale_y[i]
+                real_image[i,:,2] = real_image[i,:,2] * scale_z[i]
             highres_img = real_image
         if "lowres_max_values" in metadata:
             max_values = metadata["lowres_max_values"]
@@ -385,7 +462,7 @@ class PCcompression:
                 )
                 high_image = jp2k_high[:]
                 high_image = high_image.astype(np.float64)
-                high_image = ((high_image) / 65535)
+                high_image = ((high_image) / 255)
                 high_image = high_image * 2 - 1
                 # dif = ((dif) * self.Ocbit_threshold)
                 wide = high_image.shape[1]
@@ -421,9 +498,9 @@ class PCcompression:
             final_image = final_image * max(abs(max_values), abs(min_values))
 
             lowres_img = final_image
-        if "highres_max_values" in metadata and "lowres_max_values" in metadata:
+        if "scale_x_max" in metadata and "lowres_max_values" in metadata:
             real_image = np.concatenate((highres_img, lowres_img), axis=1)
-        elif "highres_max_values" in metadata:
+        elif "scale_x_max" in metadata:
             real_image = highres_img
         else:
             real_image = lowres_img
@@ -434,14 +511,14 @@ class PCcompression:
 
     def __IDCTProcess(self, real_image, channel_name,overlap_size) -> np.array:
         if channel_name == "x":
-            # global combined_image
+            global combined_image
 
-            # realdiff = combined_image[:,:,0] - real_image
-            # plt.plot(real_image[1])
-            # plt.plot(combined_image[1,:,0])
-            # # plt.imshow(realdiff[:50,:])
-            # plt.show()
-            # plt.close()
+            realdiff = combined_image[:,:,0] - real_image
+            plt.plot(real_image[1])
+            plt.plot(combined_image[1,:,0])
+            # plt.imshow(realdiff[:50,:])
+            plt.show()
+            plt.close()
             x_imag_original_global = real_image
 
         x_reconstructed_frames = []

@@ -63,8 +63,8 @@ if __name__ == "__main__":
     # plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     # plt.show()
     # plt.close()
-    # pcc = PCcompression(32,1,0,10/10,0,True, True, False)
-    # pcc.pc2mp3(path, "./data_output/01_save")
+    pcc = PCcompression(64,1,1,0/10,0,True, True, False)
+    pcc.pc2mp3(path, "./data_output/01_save")
 
 
     BPP = np.zeros((len(thresholds), len(compress_ratios)))
