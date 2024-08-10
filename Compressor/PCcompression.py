@@ -143,6 +143,8 @@ class PCcompression:
     def __UnuniQuantize(self, image: np.array, level: float):
         # return self.__arcsintransform(image, level)
         # return self.__arctantransform(image, level)
+        if level == 0:
+            return image
         return np.arctan(image * level) * 2 / 3.1415926
         return self.__sintransform(image, level)
         pass
@@ -150,6 +152,8 @@ class PCcompression:
     def __unpackUnuniQuantize(self, image: np.array, level: float):
         # return self.__sintransform(image, level)
         # return self.__tantransform(image, level)
+        if level == 0:
+            return image
         return np.tan((image) * 3.1415926 / 2) / level
         return self.__arcsintransform(image, level)
         pass
@@ -276,7 +280,7 @@ class PCcompression:
             normal_lowres_img = normal_lowres_img[:,int(normal_lowres_img.shape[1]/2):,:]
 
             threshold = np.max(normal_lowres_img)*self.Ocbit_threshold
-            dif_indices = np.where((normal_lowres_img > threshold) | (normal_lowres_img < -threshold))
+            dif_indices = np.where((normal_lowres_img >= threshold) | (normal_lowres_img <= -threshold))
             bitmap = np.zeros(normal_lowres_img.shape[0])
             for i in range(dif_indices[0].shape[0]):
                 bitmap[dif_indices[0][i]] = 1
@@ -492,7 +496,7 @@ class PCcompression:
         max_range = pow(pow(x_range, 2) + pow(y_range, 2) + pow(z_range, 2), 0.5)
 
         psnr = 10 * np.log10(pow(max_range, 2) / mse)
-        return psnr
+        return psnr ,distances
 
     def __downsample(self, x, y, z):
         x_down = np.zeros(len(x) // 2)
@@ -572,8 +576,7 @@ class PCcompression:
         pc = np.stack((x_readed, y_readed, z_readed), axis=-1)
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(pc)
-        if self.visualize:
-            o3d.visualization.draw_geometries([pcd])
+
         o3d.io.write_point_cloud("{}/saved_point_cloud.ply".format(savedir), pcd)
         # calculate compression ratio
         compression_size = 0
@@ -588,7 +591,25 @@ class PCcompression:
 
         origin = np.stack((x_value, y_value, z_value), axis=-1)
         readed = np.stack((x_readed, y_readed, z_readed), axis=-1)
-        psnr = self.__calculate_psnr(origin, readed)
+        psnr,distances = self.__calculate_psnr(origin, readed)
         print("BPP: ", 8 * compression_size / x_readed.shape[0])
         print("PSNR: ", psnr)
+        color = np.zeros((x_readed.shape[0], 3))
+        print(distances.shape)
+        distances = distances / np.max(distances)
+        distances = distances
+        blue_color = np.array([0, 0, 1])
+        red_color = np.array([1, 0, 0])
+        for i in range(distances.shape[0]):
+            color[i] = distances[i] * red_color + (1 - distances[i]) * blue_color
+        pcd.colors = o3d.utility.Vector3dVector(color)
+        if self.visualize:
+            o3d.visualization.draw_geometries([pcd])
+            # distancetocenter = np.linalg.norm(readed, axis=1)
+            # plt.scatter(distancetocenter, distances[:, 0])
+            # plt.xlabel('Distance to Center')
+            # plt.ylabel('Distances')
+            # plt.title('Scatter Plot of Distances')
+            # plt.show()
+            # plt.close()
         return 8 * compression_size / x_readed.shape[0], psnr
