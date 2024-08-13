@@ -240,7 +240,7 @@ class PCcompression:
             highres_max_values = np.max(highres_img)
             highres_min_values = np.min(highres_img)
             highres_img = highres_img / max(abs(highres_max_values), abs(highres_min_values))
-            highres_img = self.__UnuniQuantize(highres_img, 10)
+            highres_img = self.__UnuniQuantize(highres_img, ununiQuantizeNum)
             highres_img = (highres_img + 1) / 2
 
             highres_img = (highres_img * 65535)
@@ -371,7 +371,7 @@ class PCcompression:
             real_image = ((real_image) / 65535)
 
             real_image = real_image * 2 - 1
-            real_image = self.__unpackUnuniQuantize(real_image, 10)
+            real_image = self.__unpackUnuniQuantize(real_image, ununiQuantizeNum)
 
             real_image = real_image * max(abs(max_values), abs(min_values))
             highres_img = real_image
@@ -469,19 +469,21 @@ class PCcompression:
         x_value = original[:, 0]
         y_value = original[:, 1]
         z_value = original[:, 2]
-        # build point cloud
-        # build point cloud
         nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(original)
-
-        # search nearest point
-        # search nearest point
         mse = 0
         _, indices = nbrs.kneighbors(compressed)
         distances = np.zeros((len(indices), 1))
         for i in range(len(indices)):
             distances[i] = np.linalg.norm(original[indices[i][0]] - compressed[i])
         mse = np.mean(np.square(distances))
-
+        
+        reverse_nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(compressed)
+        _, reverse_indices = reverse_nbrs.kneighbors(original)
+        reverse_distances = np.zeros((len(reverse_indices), 1))
+        for i in range(len(reverse_indices)):
+            reverse_distances[i] = np.linalg.norm(compressed[reverse_indices[i][0]] - original[i])
+        reverse_mse = np.mean(np.square(reverse_distances))
+        mse = (mse + reverse_mse) / 2
         # calculate MSE
         # mse /= len(x_value)+len(y_value)+len(z_value)
         x_range = np.max(x_value) - np.min(x_value)
@@ -554,6 +556,8 @@ class PCcompression:
             os.makedirs(savedir)
         if self.dodownsample:
             x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
+            x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
+
         # spilct x_value to frames, each frames has frame_size samples
         x_image = self.__DCTProcess(x_value, "x")
         y_image = self.__DCTProcess(y_value, "y")
@@ -571,6 +575,7 @@ class PCcompression:
         y_readed = self.__IDCTProcess(y_read_image, "y",metadata["overlapSize"])
         z_readed = self.__IDCTProcess(z_read_image, "z",metadata["overlapSize"])
         if metadata["Downsample"] == 1:
+            x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
             x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
 
         pc = np.stack((x_readed, y_readed, z_readed), axis=-1)

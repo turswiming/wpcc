@@ -63,36 +63,36 @@ if __name__ == "__main__":
     # plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     # plt.show()
     # plt.close()
-    # pcc = PCcompression(32,1,0,10/10,0,True, True, False)
-    # pcc.pc2mp3(path, "./data_output/01_save")
+    pcc = PCcompression(16,10,1,10/10,0,True, True, False)
+    pcc.pc2mp3(path, "./data_output/01_save")
 
 
-    BPP = np.zeros((len(thresholds), len(compress_ratios)))
-    psnrs = np.zeros((len(thresholds), len(compress_ratios)))
+    BPP = np.zeros((len(frame_sizes), len(compress_ratios)))
+    psnrs = np.zeros((len(frame_sizes), len(compress_ratios)))
     i = 0
     j = 0
     with open ("csvfile.csv", "w") as f:
-        f.write("threshold,compress_ratio,ratio,psnr\n")
-        for  threshold in thresholds:
+        f.write("frame_size,compress_ratio,ratio,D1\n")
+        for  frame_size in frame_sizes:
             for  compress_ratio in compress_ratios:
                 print("-----------------")  
-                print("threshold: ", threshold)
+                print("frame_size: ", frame_size)
                 print("compress_ratio: ", compress_ratio)
-                pcc = PCcompression(32,compress_ratio,0,threshold,2,True,False,False)
+                pcc = PCcompression(frame_size,compress_ratio,1,0,0,True,False,False)
                 BPP[i,j], psnrs[i,j] = pcc.pc2mp3(path,"./data_output/01_save")
-                f.write("{},{},{},{}\n".format(threshold,compress_ratio,BPP[i,j],psnrs[i,j]))
+                f.write("{},{},{},{}\n".format(frame_size,compress_ratio,BPP[i,j],psnrs[i,j]))
                 j+=1
             j = 0
             i+=1
     np.save("BPP.npy", BPP)
     np.save("psnrs.npy", psnrs)
     plt.imshow(BPP)
-    plt.xticks(np.arange(len(thresholds)), labels=thresholds)
+    plt.xticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     plt.yticks(np.arange(len(compress_ratios)), labels=compress_ratios)
     plt.show()
     plt.close()
     plt.imshow(psnrs)
-    plt.xticks(np.arange(len(thresholds)), labels=thresholds)
+    plt.xticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     plt.yticks(np.arange(len(compress_ratios)), labels=compress_ratios)
     plt.show()
     plt.close()
