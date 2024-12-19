@@ -543,9 +543,22 @@ class PCcompression:
         x_value = np_pcd[:, 0]
         y_value = np_pcd[:, 1]
         z_value = np_pcd[:, 2]
-        # remove this dir
-        z_value = np_pcd[:, 2]
-        # remove this dir
+
+        x_max = np.max(x_value)
+        x_min = np.min(x_value)
+        y_max = np.max(y_value)
+        y_min = np.min(y_value)
+        z_max = np.max(z_value)
+        z_min = np.min(z_value)
+        global_max = max(x_max, y_max, z_max)
+        global_min = min(x_min, y_min, z_min)
+        global_extreme = max(abs(global_max), abs(global_min))
+        x_value = x_value / global_extreme /100
+        y_value = y_value / global_extreme /100
+        z_value = z_value / global_extreme /100
+
+
+        # remove this directory
         if os.path.exists(savedir):
             for file in os.listdir(savedir):
                 os.remove("{}/".format(savedir) + file)
@@ -578,6 +591,12 @@ class PCcompression:
         pcd.points = o3d.utility.Vector3dVector(pc)
 
         o3d.io.write_point_cloud("{}/saved_point_cloud.ply".format(savedir), pcd)
+        print("saved point cloud saved at: ", "{}/saved_point_cloud.ply".format(savedir))
+        pc_original = np.stack((x_value, y_value, z_value), axis=-1) 
+        pcd_original = o3d.geometry.PointCloud()
+        pcd_original.points = o3d.utility.Vector3dVector(pc_original)
+        o3d.io.write_point_cloud("{}/original_point_cloud.ply".format(savedir), pcd_original)
+        print("original point cloud saved at: ", "{}/original_point_cloud.ply".format(savedir))
         # calculate compression ratio
         compression_size = 0
         for file in os.listdir("{}/".format(savedir)):
