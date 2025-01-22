@@ -121,24 +121,19 @@ class PCcompression:
         return occluded_number
 
     def estimate_lidar_position(self,pcd):
-        # 读取点云文件
         np_pcd = np.asarray(pcd.points)
         bounding_box = pcd.get_axis_aligned_bounding_box()
-        # 初始猜测值（可以是几何中心）
         initial_guess = np.array([0, 0, 0])
         is_occluded = self.is_occluded
-        # 定义优化目标函数
         def objective_function_first_step(params):
             return is_occluded(params, np_pcd)
-        # bounds = bounds*3
 
-        # 使用最小化函数进行优化
         result = minimize(
             objective_function_first_step, 
             initial_guess,
             method='BFGS',
             bounds=[(-1, 1), (-1, 1), (-1, 1)],
-            options={"eps": 1e-3, "maxiter": 100}
+            options={"maxiter": 100}
             )
         
         return result.x
