@@ -39,7 +39,8 @@ from sklearn.neighbors import NearestNeighbors
 import numpy as np
 import Compressor.framewidthTable as fwt
 from bitarray import bitarray
-
+from scipy.optimize import minimize
+import math
 x_real_original_global = np.array([])
 ununiQuantizeNum = 2
 
@@ -80,6 +81,67 @@ class PCcompression:
         self.Ocbit_threshold = Ocbit_threshold
         pass
 
+
+
+    def is_occluded(self,center, points, threshold=0.1,ballsize=0.003):
+        print("center: ", center)
+        #convert points-conter to polar coordinates
+        angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+        distances = np.linalg.norm(points - center, axis=1)
+        distances = distances / np.max(distances) *3.14
+        #calculate pitch and yaw
+        pitchs = np.arctan2(points[:, 2] - center[2], distances)
+        #knn search
+        #build up knn
+        # angle_pitch= np.stack((angles, pitchs), axis=-1)
+        # knn = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(angle_pitch)
+        # #search nearest point
+        # distances, indices = knn.kneighbors(angle_pitch)
+        # repulsions = np.zeros((len(angles), 1))
+        # for i in range(0,len(angles),100):
+        #     repulsions[i] =   max(10,1/np.sum(distances[1]))
+        angle_pitch_map = {}
+        occluded_number = 0
+        for i in range(len(angles)):
+            tuple = (int(angles[i]/ballsize), int(pitchs[i]/ballsize))
+            if tuple not in angle_pitch_map:
+                angle_pitch_map[tuple] = 1
+            else:
+                occluded_number +=1
+
+        # angle_pitch_array = np.zeros((int(3.14*2/ballsize+1), int(3.14*2/ballsize+1)))
+        # for i in range(len(angles)):
+        #     angle_pitch_array[int(angles[i]/ballsize), int(pitchs[i]/ballsize)] = 1
+        #show the map
+        # plt.imshow(angle_pitch_array)
+        # plt.show()
+        # plt.close()
+        print("occluded_number: ", occluded_number)
+        # print("repulsions: ", np.sum(repulsions))
+        return occluded_number
+
+    def estimate_lidar_position(self,pcd):
+        # 读取点云文件
+        np_pcd = np.asarray(pcd.points)
+        bounding_box = pcd.get_axis_aligned_bounding_box()
+        # 初始猜测值（可以是几何中心）
+        initial_guess = np.array([0, 0, 0])
+        is_occluded = self.is_occluded
+        # 定义优化目标函数
+        def objective_function_first_step(params):
+            return is_occluded(params, np_pcd)
+        # bounds = bounds*3
+
+        # 使用最小化函数进行优化
+        result = minimize(
+            objective_function_first_step, 
+            initial_guess,
+            method='BFGS',
+            bounds=[(-1, 1), (-1, 1), (-1, 1)],
+            options={"eps": 1e-3, "maxiter": 100}
+            )
+        
+        return result.x
     def __calc_diff(self, image):
         # calculate the difference along vertical direction
         diff = np.diff(image, axis=0)
@@ -540,6 +602,9 @@ class PCcompression:
 
         pcd = o3d.io.read_point_cloud(filename)
         np_pcd = np.asarray(pcd.points)
+        #detect the center of the point cloud
+        center = self.estimate_lidar_position(pcd)
+        print("center: ", center)
         x_value = np_pcd[:, 0]
         y_value = np_pcd[:, 1]
         z_value = np_pcd[:, 2]
@@ -552,10 +617,10 @@ class PCcompression:
         z_min = np.min(z_value)
         global_max = max(x_max, y_max, z_max)
         global_min = min(x_min, y_min, z_min)
-        global_extreme = max(abs(global_max), abs(global_min))
-        x_value = x_value / global_extreme /100
-        y_value = y_value / global_extreme /100
-        z_value = z_value / global_extreme /100
+        # global_extreme = max(abs(global_max), abs(global_min))
+        # x_value = x_value / global_extreme /100
+        # y_value = y_value / global_extreme /100
+        # z_value = z_value / global_extreme /100
 
 
         # remove this directory
@@ -622,8 +687,16 @@ class PCcompression:
         for i in range(distances.shape[0]):
             color[i] = distances[i] * red_color + (1 - distances[i]) * blue_color
         pcd.colors = o3d.utility.Vector3dVector(color)
+        #draw a big ball mesh in the center
+        center_pcd = o3d.geometry.PointCloud()
+        center_points = np.random.rand(100, 3)
+        center_points = center_points
+        center_points = center_points + center
+        center_pcd.points = o3d.utility.Vector3dVector(center_points)
+
+
         if self.visualize:
-            o3d.visualization.draw_geometries([pcd])
+            o3d.visualization.draw_geometries([pcd,center_pcd])
             # distancetocenter = np.linalg.norm(readed, axis=1)
             # plt.scatter(distancetocenter, distances[:, 0])
             # plt.xlabel('Distance to Center')
