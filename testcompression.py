@@ -24,10 +24,18 @@ usage:
 if __name__ == "__main__":
     frame_sizes = [4,8,16,32,64,128, 256, 512,1024,2048,4096,8192]
     hires_rates = [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1]
-    thresholds = [0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1]
-    compress_ratios = [1,2,3,4,5,6,7,8,9,10]
+    thresholds = [0]
+    compress_ratios = [1,2,3,4,5,6,7,8,9,10,15,20,25,30,35,40,45,50]
     # BPP = np.load("BPP.npy")
     # psnrs = np.load("psnrs.npy")
+
+    # plt.scatter(BPP.flatten(), psnrs.flatten())
+    # plt.xlabel('Bits Per Pixel (BPP)')
+    # plt.ylabel('PSNR')
+    # plt.title('BPP vs PSNR')
+    # plt.grid(True)
+    # plt.show()
+
     # # # 创建一个二维的 numpy 数组
     # # data = np.random.rand(10, 10)
     # #
@@ -78,7 +86,7 @@ if __name__ == "__main__":
                 print("-----------------")  
                 print("threshold: ", threshold)
                 print("compress_ratio: ", compress_ratio)
-                pcc = PCcompression(32,compress_ratio,0,threshold,2,True,False,False)
+                pcc = PCcompression(32,compress_ratio,0,0,0,False,False,False)
                 BPP[i,j], psnrs[i,j] = pcc.pc2mp3(path,"./data_output/01_save")
                 f.write("{},{},{},{}\n".format(threshold,compress_ratio,BPP[i,j],psnrs[i,j]))
                 j+=1
