@@ -71,7 +71,7 @@ if __name__ == "__main__":
     # plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     # plt.show()
     # plt.close()
-    pcc = PCcompression(32,5,0,0/10,0,False, True, False)
+    pcc = PCcompression(32,5,False, True)
     pcc.pc2mp3(path, "./data_output/01_save")
 
 
@@ -86,7 +86,7 @@ if __name__ == "__main__":
                 print("-----------------")  
                 print("threshold: ", threshold)
                 print("compress_ratio: ", compress_ratio)
-                pcc = PCcompression(32,compress_ratio,0,0,0,False,False,False)
+                pcc = PCcompression(32,compress_ratio,False,False)
                 BPP[i,j], psnrs[i,j] = pcc.pc2mp3(path,"./data_output/01_save")
                 f.write("{},{},{},{}\n".format(threshold,compress_ratio,BPP[i,j],psnrs[i,j]))
                 j+=1

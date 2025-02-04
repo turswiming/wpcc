@@ -48,37 +48,17 @@ class PCcompression:
     def __init__(self,
                  frame_size,
                  compression_value,
-                 highres_rate=0,
-                 Ocbit_threshold=1/10,
-                 overlap_size = 0,
                  dodownsample=False,
-                 visualize=False,
-                 use8bit=False) -> None:
+                 visualize=False
+                 ) -> None:
         if frame_size % 2 != 0:
             raise ValueError("frame_size should be even")
         fwtable = fwt.FrameSizeTable()
-        # if frame_size not in fwtable.get_frame_sizes(compression_value):
-        #     print("frame_size: ", frame_size, " is not suggested, please use the following frame sizes: ",
-        #           fwtable.get_frame_sizes(compression_value))
-        #     print("frame_size will be set to", fwtable.get_frame_sizes(compression_value)[0],
-        #           " automatically this time")
-        #     self.frame_size = fwtable.get_frame_sizes(compression_value)[0]
-        # else:
         self.frame_size = frame_size
         self.compression_value = compression_value
-        self.overlap_size = overlap_size
         self.dodownsample = dodownsample
-        if 0.0 <= highres_rate <= 1.0:
-            self.highres_rate = highres_rate
-        else:
-            raise ValueError("highres_rate should be between 0.0 and 1.0")
-        # if edge_size *2 >=frame_size:
-        #     raise ValueError("edge_size should be smaller than frame_size/2")
-        # self.edge_size = edge_size
         self.visualize = visualize
-        self.use8bit = use8bit
         self.tiny = 10000
-        self.Ocbit_threshold = Ocbit_threshold
         pass
 
 
@@ -246,12 +226,12 @@ class PCcompression:
         # 1.1 cliping
         x_frames = []
         for i in range(0, len(value), self.frame_size):
-            x_frames.append(value[i:i + self.frame_size+self.overlap_size])
+            x_frames.append(value[i:i + self.frame_size])
         # 1.2 DCT
         # apply DCT to each frame
         x_dct_frames = []
         for frame in x_frames:
-            if len(frame) < self.frame_size+self.overlap_size:
+            if len(frame) < self.frame_size:
                 continue
             dct_result = dct(frame, norm='ortho')
             x_dct_frames.append(dct_result)
@@ -289,123 +269,39 @@ class PCcompression:
         global combined_image
         combined_image = np.stack((x_image, y_image, z_image), axis=-1)
 
-        highres_size = int(self.highres_rate * (self.frame_size+self.overlap_size))
         metadata = {}
 
-        if highres_size != 0:
-            highres_img = combined_image[:, :highres_size, :]
-            highres_max_values = np.max(highres_img)
-            highres_min_values = np.min(highres_img)
-            highres_img = highres_img / max(abs(highres_max_values), abs(highres_min_values))
-            highres_img = self.__UnuniQuantize(highres_img, 10)
-            highres_img = (highres_img + 1) / 2
 
-            highres_img = (highres_img * 65535)
-            highres_img = highres_img.astype(np.uint16)
+        max_values = np.max(combined_image)
+        min_values = np.min(combined_image)
 
-            jp2_filename = "{}/dct_frames_left.jp2".format(savedir)
-            tile_size = (highres_img.shape[0],  highres_img.shape[1])
-            jp2 = glymur.Jp2k(
-                jp2_filename,
-                data=highres_img,
-                numres=1,
-                cratios=(self.compression_value,),
-                tilesize=tile_size,
-                display_resolution=None,
-                modesw=1,
-                mct=False,
-                # remove unused markers
-                eph=False,
-                plt=False,
-                sop=False,
-                tlm=False,
-            )
-            metadata["highres_max_values"] = highres_max_values
-            metadata["highres_min_values"] = highres_min_values
-
-        if highres_size != (self.frame_size+self.overlap_size):
-            lowres_img = combined_image[:, highres_size:, :]
-            lowres_max_values = np.max(lowres_img)
-            lowres_min_values = np.min(lowres_img)
-            normal_lowres_img = np.copy(lowres_img)
-            for i in range(lowres_img.shape[0]):
-                line_max = np.max(lowres_img[i])
-                line_min = np.min(lowres_img[i])
-                normal_lowres_img[i] = lowres_img[i] / max(abs(line_max), abs(line_min))
-                
-            lowres_img = lowres_img / max(abs(lowres_max_values), abs(lowres_min_values))
-            normal_lowres_img = normal_lowres_img[:,int(normal_lowres_img.shape[1]/2):,:]
-
-            threshold = np.max(normal_lowres_img)*self.Ocbit_threshold
-            dif_indices = np.where((normal_lowres_img >= threshold) | (normal_lowres_img <= -threshold))
-            bitmap = np.zeros(normal_lowres_img.shape[0])
-            for i in range(dif_indices[0].shape[0]):
-                bitmap[dif_indices[0][i]] = 1
-            bitmap = bitmap.astype(np.bool)
-            bitmap = self.__createContinuedBitmap(bitmap)
-            print("bitmap shape: ", bitmap.shape)
-            print("true: ", bitmap[bitmap == True].shape)
-            print("false: ", bitmap[bitmap == False].shape)
-            unkey_img = lowres_img[bitmap]
-            unkey_img = self.__UnuniQuantize(unkey_img, ununiQuantizeNum)
-            unkey_img = (unkey_img + 1) / 2
-            unkey_img = (unkey_img * 65535)
-            unkey_img = unkey_img.astype(np.uint16)
-            jp2_filename = "{}/dct_frames_right.jp2".format(savedir)
-            tile_size = (unkey_img.shape[0], unkey_img.shape[1])
-            if unkey_img.shape[0] != 0:
-                jp2 = glymur.Jp2k(
-                    jp2_filename,
-                    data=unkey_img,
-                    numres=1,
-                    cratios=(self.compression_value,),
-                    tilesize=tile_size,
-                    display_resolution=None,
-                    modesw=1,
-                    mct=False,
-                    # remove unused markers
-                    eph=False,
-                    plt=False,
-                    sop=False,
-                    tlm=False,
-                )
-            # reverse bitmap
-            bitmap = np.logical_not(bitmap)
-            bitmap_new = bitmap
-            bitmap_new = bitmap_new.astype(np.bool)
-            key_img = lowres_img[bitmap_new]
-            unkey_img = self.__UnuniQuantize(unkey_img, ununiQuantizeNum)
-            key_img = (key_img + 1) / 2
-            key_img = (key_img * 65535)
-            key_img = key_img.astype(np.uint16)
-            tile_size = (key_img.shape[0], key_img.shape[1])
-            jp2_filename = "{}/dct_frames_right_low.jp2".format(savedir)
-            if key_img.shape[0] != 0:
-                jp2 = glymur.Jp2k(
-                    jp2_filename,
-                    data=key_img,
-                    numres=1,
-                    cratios=(self.compression_value*2,),
-                    tilesize=tile_size,
-                    display_resolution=None,
-                    modesw=1,
-                    mct=False,
-                    # remove unused markers
-                    eph=False,
-                    plt=False,
-                    sop=False,
-                    tlm=False,
-                )
-            print("Saved bitmap", bitmap_new.shape)
-            bit_arr = bitarray(bitmap_new.tolist())
-            self.__saveBitArray(bit_arr, "{}/bitmap.bin".format(savedir))
-            metadata["lowres_max_values"] = lowres_max_values
-            metadata["lowres_min_values"] = lowres_min_values
-            metadata["bitarraysize"] = bitmap_new.shape[0]
+        combined_image = combined_image / max(abs(max_values), abs(min_values))
+        combined_image = self.__UnuniQuantize(combined_image, ununiQuantizeNum)
+        combined_image = (combined_image + 1) / 2
+        combined_image = (combined_image * 65535)
+        combined_image = combined_image.astype(np.uint16)
+        jp2_filename = "{}/dct_frames_right.jp2".format(savedir)
+        tile_size = (combined_image.shape[0], combined_image.shape[1])
+        jp2 = glymur.Jp2k(
+            jp2_filename,
+            data=combined_image,
+            numres=1,
+            cratios=(self.compression_value,),
+            tilesize=tile_size,
+            display_resolution=None,
+            modesw=1,
+            mct=False,
+            # remove unused markers
+            eph=False,
+            plt=False,
+            sop=False,
+            tlm=False,
+        )
+        metadata["max_values"] = max_values
+        metadata["min_values"] = min_values
 
         metadata["Downsample"] = 1 if self.dodownsample else 0
         metadata["FrameSize"] = self.frame_size
-        metadata["overlapSize"] = self.overlap_size
         with open("{}/metadata.json".format(savedir), "w") as f:
             json.dump(metadata, f)
         pass
@@ -419,77 +315,28 @@ class PCcompression:
         with open("{}/metadata.json".format(savedir), "r") as f:
             metadata = json.load(f)
 
-        if "highres_max_values" in metadata:
-            max_values = metadata["highres_max_values"]
-            min_values = metadata["highres_min_values"]
-            jp2k = glymur.Jp2k("{}/dct_frames_left.jp2".format(savedir))
-            real_image = jp2k[:]
-            real_image = real_image.astype(np.float64)
-            real_image = ((real_image) / 65535)
+        max_values = metadata["max_values"]
+        min_values = metadata["min_values"]
+        if os.path.exists("{}/dct_frames_right.jp2".format(savedir)):
+            jp2k_high = glymur.Jp2k(
+                "{}/dct_frames_right.jp2".format(savedir),
+            )
+            image = jp2k_high[:]
+            image = image.astype(np.float64)
+            image = ((image) / 65535)
+            image = image * 2 - 1
+            wide = image.shape[1]
 
-            real_image = real_image * 2 - 1
-            real_image = self.__unpackUnuniQuantize(real_image, 10)
+        
+        image = self.__unpackUnuniQuantize(image, ununiQuantizeNum)
+        image = image * max(abs(max_values), abs(min_values))
 
-            real_image = real_image * max(abs(max_values), abs(min_values))
-            highres_img = real_image
-        if "lowres_max_values" in metadata:
-            max_values = metadata["lowres_max_values"]
-            min_values = metadata["lowres_min_values"]
-            bitarraysize = metadata["bitarraysize"]
-            if os.path.exists("{}/dct_frames_right.jp2".format(savedir)):
-                jp2k_high = glymur.Jp2k(
-                    "{}/dct_frames_right.jp2".format(savedir),
-                )
-                high_image = jp2k_high[:]
-                high_image = high_image.astype(np.float64)
-                high_image = ((high_image) / 65535)
-                high_image = high_image * 2 - 1
-                # dif = ((dif) * self.Ocbit_threshold)
-                wide = high_image.shape[1]
-            if os.path.exists("{}/dct_frames_right_low.jp2".format(savedir)):
-                jp2k_low = glymur.Jp2k(
-                    "{}/dct_frames_right_low.jp2".format(savedir),
-                )
-                low_image = jp2k_low[:]
-                low_image = low_image.astype(np.float64)
-                low_image = ((low_image) / 65535)
-                low_image = low_image * 2 - 1
-                wide = low_image.shape[1]
 
-            loaded_bit_arr = bitarray()
-            with open("{}/bitmap.bin".format(savedir), "rb") as f:
-                loaded_bit_arr.fromfile(f)
-            bitmap = np.array(loaded_bit_arr.tolist(), dtype=bool)
-            bitmap = bitmap[:bitarraysize]
-
-            final_image = np.zeros((bitmap.shape[0], wide, 3))
-
-            key_image_index = 0
-            diff_image_index = 0
-            for i in range(bitmap.shape[0]):
-                if bitmap[i] == True:
-                    final_image[i] = low_image[key_image_index]
-                    key_image_index += 1
-                if bitmap[i] == False:
-                    final_image[i] = high_image[diff_image_index]
-                    diff_image_index += 1
-            
-            final_image = self.__unpackUnuniQuantize(final_image, ununiQuantizeNum)
-            final_image = final_image * max(abs(max_values), abs(min_values))
-
-            lowres_img = final_image
-        if "highres_max_values" in metadata and "lowres_max_values" in metadata:
-            real_image = np.concatenate((highres_img, lowres_img), axis=1)
-        elif "highres_max_values" in metadata:
-            real_image = highres_img
-        else:
-            real_image = lowres_img
-
-        return real_image[:, :, 0], real_image[:, :, 1], real_image[:, :, 2], metadata
+        return image[:, :, 0], image[:, :, 1], image[:, :, 2], metadata
 
         # reconstruct the original DCT frames
 
-    def __IDCTProcess(self, real_image, channel_name,overlap_size) -> np.array:
+    def __IDCTProcess(self, real_image, channel_name) -> np.array:
         if channel_name == "x":
             # global combined_image
 
@@ -507,20 +354,9 @@ class PCcompression:
             x_reconstructed_frames.append(original_frame)
 
         overlap_frames = np.asarray(x_reconstructed_frames)
-        if overlap_size == 0:
-            series = overlap_frames.reshape(-1)
-            return series
-        series = overlap_frames[:, :-overlap_size]
-        for i in range(1, series.shape[0]):
-            for j in range(overlap_size):
-                a = overlap_frames[i - 1, -overlap_size + j]
-                b = series[i, j]
-                distance = float(abs(a - b))
-                series[i, j] = a * (j / overlap_size) + b * (1 - j / overlap_size)
-
-
-        series = series.reshape(-1)
+        series = overlap_frames.reshape(-1)
         return series
+        
 
     def __calculate_psnr(self, original, compressed):
         x_value = original[:, 0]
@@ -598,24 +434,12 @@ class PCcompression:
         pcd = o3d.io.read_point_cloud(filename)
         np_pcd = np.asarray(pcd.points)
         #detect the center of the point cloud
-        center = self.estimate_lidar_position(pcd)
-        print("center: ", center)
+        # center = self.estimate_lidar_position(pcd)
+        # print("center: ", center)
         x_value = np_pcd[:, 0]
         y_value = np_pcd[:, 1]
         z_value = np_pcd[:, 2]
 
-        x_max = np.max(x_value)
-        x_min = np.min(x_value)
-        y_max = np.max(y_value)
-        y_min = np.min(y_value)
-        z_max = np.max(z_value)
-        z_min = np.min(z_value)
-        global_max = max(x_max, y_max, z_max)
-        global_min = min(x_min, y_min, z_min)
-        # global_extreme = max(abs(global_max), abs(global_min))
-        # x_value = x_value / global_extreme /100
-        # y_value = y_value / global_extreme /100
-        # z_value = z_value / global_extreme /100
 
 
         # remove this directory
@@ -640,9 +464,9 @@ class PCcompression:
         # ---------------------------------------------------------
 
         x_read_image, y_read_image, z_read_image, metadata = self.__readdata(savedir)
-        x_readed = self.__IDCTProcess(x_read_image, "x",metadata["overlapSize"])
-        y_readed = self.__IDCTProcess(y_read_image, "y",metadata["overlapSize"])
-        z_readed = self.__IDCTProcess(z_read_image, "z",metadata["overlapSize"])
+        x_readed = self.__IDCTProcess(x_read_image, "x")
+        y_readed = self.__IDCTProcess(y_read_image, "y")
+        z_readed = self.__IDCTProcess(z_read_image, "z")
         if metadata["Downsample"] == 1:
             x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
 
@@ -683,15 +507,9 @@ class PCcompression:
             color[i] = distances[i] * red_color + (1 - distances[i]) * blue_color
         pcd.colors = o3d.utility.Vector3dVector(color)
         #draw a big ball mesh in the center
-        center_pcd = o3d.geometry.PointCloud()
-        center_points = np.random.rand(100, 3)
-        center_points = center_points
-        center_points = center_points + center
-        center_pcd.points = o3d.utility.Vector3dVector(center_points)
-
 
         if self.visualize:
-            o3d.visualization.draw_geometries([pcd,center_pcd])
+            o3d.visualization.draw_geometries([pcd])
             # distancetocenter = np.linalg.norm(readed, axis=1)
             # plt.scatter(distancetocenter, distances[:, 0])
             # plt.xlabel('Distance to Center')
