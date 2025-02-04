@@ -1,11 +1,14 @@
 class SVD_Data:
-    def __init__(self, Us, Ss, Vs):
+    def __init__(self, Us, Ss, Vs,Us_range,Ss_range,Vs_range):
         self.Us = Us
         self.Ss = Ss
         self.Vs = Vs
+        self.Us_range = Us_range
+        self.Ss_range = Ss_range
+        self.Vs_range = Vs_range
 
     def get(self):
-        return self.Us, self.Ss, self.Vs
+        return self.Us, self.Ss, self.Vs,self.Us_range,self.Ss_range,self.Vs_range
 
     def getU(self):
         return self.Us

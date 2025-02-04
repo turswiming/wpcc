@@ -363,34 +363,31 @@ class PCcompression:
         x_value = original[:, 0]
         y_value = original[:, 1]
         z_value = original[:, 2]
-        # build point cloud
-        # build point cloud
-        nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(original)
+        x_range = np.max(x_value) - np.min(x_value)
+        y_range = np.max(y_value) - np.min(y_value)
+        z_range = np.max(z_value) - np.min(z_value)
+        max_range = pow(pow(x_range, 2) + pow(y_range, 2) + pow(z_range, 2), 0.5)
 
-        # search nearest point
-        # search nearest point
+
+        nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(original)
         mse = 0
         _, indices = nbrs.kneighbors(compressed)
-        distances = np.zeros((len(indices), 1))
+        distances1 = np.zeros((len(indices), 1))
         for i in range(len(indices)):
-            distances[i] = np.linalg.norm(original[indices[i][0]] - compressed[i])
-        mse = np.mean(np.square(distances))
+            distances1[i] = np.linalg.norm(original[indices[i][0]] - compressed[i])
+        mse = np.mean(np.square(distances1))
+        psnr1 = 10 * np.log10(pow(max_range, 2) / mse)
 
-        # calculate MSE
-        # mse /= len(x_value)+len(y_value)+len(z_value)
-        x_range = np.max(x_value) - np.min(x_value)
-        y_range = np.max(y_value) - np.min(y_value)
-        z_range = np.max(z_value) - np.min(z_value)
-        max_range = pow(pow(x_range, 2) + pow(y_range, 2) + pow(z_range, 2), 0.5)
+        nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(compressed)
+        mse = 0
+        _, indices = nbrs.kneighbors(original)
+        distances2 = np.zeros((len(indices), 1))
+        for i in range(len(indices)):
+            distances2[i] = np.linalg.norm(compressed[indices[i][0]] - original[i])
+        mse = np.mean(np.square(distances2))
+        psnr2 = 10 * np.log10(pow(max_range, 2) / mse)
 
-        psnr = 10 * np.log10(pow(max_range, 2) / mse)
-        x_range = np.max(x_value) - np.min(x_value)
-        y_range = np.max(y_value) - np.min(y_value)
-        z_range = np.max(z_value) - np.min(z_value)
-        max_range = pow(pow(x_range, 2) + pow(y_range, 2) + pow(z_range, 2), 0.5)
-
-        psnr = 10 * np.log10(pow(max_range, 2) / mse)
-        return psnr ,distances
+        return (psnr1+psnr2)/2 ,distances1
 
     def __downsample(self, x, y, z):
         x_down = np.zeros(len(x) // 2)
@@ -439,23 +436,43 @@ class PCcompression:
             if len(pc_frame) < self.frame_size:
                 continue
             U, S, V = self.__SVD_single(pc_frame)
-            # V[1,:] = 0
             Us.append(U)
             Ss.append(S)
             Vs.append(V)
+        Us = np.array(Us)
+        Ss = np.array(Ss)
+        Vs = np.array(Vs)
+        U_max = np.max(Us)
+        U_min = np.min(Us)
+        S_max = np.max(Ss)
+        S_min = np.min(Ss)
+        V_max = np.max(Vs)
+        V_min = np.min(Vs)
+        Us_range = max(abs(U_max), abs(U_min))
+        Ss_range = max(abs(S_max), abs(S_min))
+        Vs_range = max(abs(V_max), abs(V_min))
+
+        Us = Us / Us_range
+        Ss = Ss / Ss_range
+        Vs = Vs / Vs_range
+        Us = (Us*128).astype(np.int8).astype(np.float64)/128
         if self.visualize:
             print(Ss[0].shape)
-            from Compressor.visualize.show_matrix import show_matrix
+            from Compressor.visualize.show_matrix import show_matrix, show_histogram
+            show_histogram(Vs)
             showed = Vs
             matrix = np.zeros((len(showed), showed[0].shape[0]*showed[0].shape[1]))
             for i in range(len(showed)):
                 matrix[i] = showed[i].reshape(-1)
             print(matrix.shape)
             show_matrix(matrix)
-        return SVD_Data(Us, Ss, Vs)
+        return SVD_Data(Us, Ss, Vs, Us_range, Ss_range, Vs_range)
 
     def __Reverse_SVD(self, svd_data:SVD_Data)->np.array:
-        Us, Ss, Vs = svd_data.get()
+        Us, Ss, Vs,Us_range,Ss_range,Vs_range = svd_data.get()
+        Us = Us * Us_range
+        Ss = Ss * Ss_range
+        Vs = Vs * Vs_range
         pc = np.zeros((len(Us) * self.frame_size, 3))
         for i in range(len(Us)):
             U = Us[i]
@@ -495,8 +512,8 @@ class PCcompression:
             os.makedirs(savedir)
         if self.dodownsample:
             x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
-        pc = np.stack((x_value, y_value, z_value), axis=-1)
-        svd_data = self.__SVD(pc)
+        # pc = np.stack((x_value, y_value, z_value), axis=-1)
+        # svd_data = self.__SVD(pc)
         
         # spilct x_value to frames, each frames has frame_size samples
         x_image = self.__DCTProcess(x_value, "x")
@@ -514,10 +531,10 @@ class PCcompression:
         x_readed = self.__IDCTProcess(x_read_image, "x")
         y_readed = self.__IDCTProcess(y_read_image, "y")
         z_readed = self.__IDCTProcess(z_read_image, "z")
-        pc = self.__Reverse_SVD(svd_data)
-        x_readed = pc[:, 0]
-        y_readed = pc[:, 1]
-        z_readed = pc[:, 2]
+        # pc = self.__Reverse_SVD(svd_data)
+        # x_readed = pc[:, 0]
+        # y_readed = pc[:, 1]
+        # z_readed = pc[:, 2]
         if metadata["Downsample"] == 1:
             x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
         

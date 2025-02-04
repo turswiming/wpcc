@@ -14,3 +14,8 @@ def show_matrix(matrix):
     # 绘制三维图表
     ax.plot_surface(x, y, matrix.T, cmap='viridis')  # 转置矩阵以匹配 x 和 y 的形状
     plt.show()
+
+def show_histogram(data):
+    data = data.flatten()
+    plt.hist(data, bins=100)
+    plt.show()

@@ -22,10 +22,9 @@ usage:
     
 """
 if __name__ == "__main__":
-    frame_sizes = [4,8,16,32,64,128, 256, 512,1024,2048,4096,8192]
-    hires_rates = [0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1]
-    thresholds = [0]
-    compress_ratios = [1,2,3,4,5,6,7,8,9,10,15,20,25,30,35,40,45,50]
+    frame_sizes = [4,8,16,32,64,128, 256]
+    compress_ratios = [1,3,5,7,9,10,15,20,30,40,50]
+    downsamples = [True,False]
     # BPP = np.load("BPP.npy")
     # psnrs = np.load("psnrs.npy")
 
@@ -71,37 +70,23 @@ if __name__ == "__main__":
     # plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     # plt.show()
     # plt.close()
-    pcc = PCcompression(64,5,False, True)
-    pcc.pc2mp3(path, "./data_output/01_save")
+    # pcc = PCcompression(32,10,True, True)
+    # pcc.pc2mp3(path, "./data_output/01_save")
 
 
-    BPP = np.zeros((len(thresholds), len(compress_ratios)))
-    psnrs = np.zeros((len(thresholds), len(compress_ratios)))
+    BPP = np.zeros((len(frame_sizes), len(compress_ratios)))
+    psnrs = np.zeros((len(frame_sizes), len(compress_ratios)))
     i = 0
     j = 0
     with open ("csvfile.csv", "w") as f:
-        f.write("threshold,compress_ratio,ratio,psnr\n")
-        for  threshold in thresholds:
-            for  compress_ratio in compress_ratios:
-                print("-----------------")  
-                print("threshold: ", threshold)
-                print("compress_ratio: ", compress_ratio)
-                pcc = PCcompression(32,compress_ratio,False,False)
-                BPP[i,j], psnrs[i,j] = pcc.pc2mp3(path,"./data_output/01_save")
-                f.write("{},{},{},{}\n".format(threshold,compress_ratio,BPP[i,j],psnrs[i,j]))
-                j+=1
-            j = 0
-            i+=1
-    np.save("BPP.npy", BPP)
-    np.save("psnrs.npy", psnrs)
-    plt.imshow(BPP)
-    plt.xticks(np.arange(len(thresholds)), labels=thresholds)
-    plt.yticks(np.arange(len(compress_ratios)), labels=compress_ratios)
-    plt.show()
-    plt.close()
-    plt.imshow(psnrs)
-    plt.xticks(np.arange(len(thresholds)), labels=thresholds)
-    plt.yticks(np.arange(len(compress_ratios)), labels=compress_ratios)
-    plt.show()
-    plt.close()
-    print("Done.")
+        f.write("downsample,frame_size,compress_ratio,ratio,psnr\n")
+        for downsample in downsamples:
+            for  frame_size in frame_sizes:
+                for  compress_ratio in compress_ratios:
+                    print("-----------------")  
+                    print("frame_size: ", frame_size)
+                    print("compress_ratio: ", compress_ratio)
+                    pcc = PCcompression(frame_size,compress_ratio,downsample,False)
+                    bpp, psnr = pcc.pc2mp3(path,"./data_output/01_save")
+                    f.write("{},{},{},{},{}\n".format(downsample,frame_size,compress_ratio,bpp,psnr))
+
