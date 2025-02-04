@@ -41,6 +41,7 @@ import Compressor.framewidthTable as fwt
 from bitarray import bitarray
 from scipy.optimize import minimize
 import math
+from Compressor.datatype.SVD import SVD_Data
 x_real_original_global = np.array([])
 ununiQuantizeNum = 2
 
@@ -428,7 +429,50 @@ class PCcompression:
                 y_up[i] = (y_up[i - 1] + y_up[i + 1]) / 2
                 z_up[i] = (z_up[i - 1] + z_up[i + 1]) / 2
         return x_up, y_up, z_up
+    def __SVD(self, pc:np.array)->SVD_Data:
+        #split pc into frames with frame_size samples
+        Us = []
+        Ss = []
+        Vs = []
+        for i in range(0, pc.shape[0], self.frame_size):
+            pc_frame = pc[i:i + self.frame_size]
+            if len(pc_frame) < self.frame_size:
+                continue
+            U, S, V = self.__SVD_single(pc_frame)
+            # V[1,:] = 0
+            Us.append(U)
+            Ss.append(S)
+            Vs.append(V)
+        if self.visualize:
+            print(Ss[0].shape)
+            from Compressor.visualize.show_matrix import show_matrix
+            showed = Vs
+            matrix = np.zeros((len(showed), showed[0].shape[0]*showed[0].shape[1]))
+            for i in range(len(showed)):
+                matrix[i] = showed[i].reshape(-1)
+            print(matrix.shape)
+            show_matrix(matrix)
+        return SVD_Data(Us, Ss, Vs)
 
+    def __Reverse_SVD(self, svd_data:SVD_Data)->np.array:
+        Us, Ss, Vs = svd_data.get()
+        pc = np.zeros((len(Us) * self.frame_size, 3))
+        for i in range(len(Us)):
+            U = Us[i]
+            S = Ss[i]
+            V = Vs[i]
+            pc[i * self.frame_size:(i + 1) * self.frame_size] = self.__Reverse_SVD_single(U, S, V)
+        return pc
+
+
+    def __SVD_single(self, pc)->tuple[np.array, np.array, np.array]:
+        # truncated SVD with k=1
+        from scipy.sparse.linalg import svds
+        pc = pc.transpose() # we need to explain why
+        U, S, V = svds(pc, k=2)
+        return U, S, V
+    def __Reverse_SVD_single(self, U, S, V):
+        return np.dot(U, np.dot(np.diag(S), V)).transpose()
     def pc2mp3(self, filename, savedir):
 
         pcd = o3d.io.read_point_cloud(filename)
@@ -451,6 +495,9 @@ class PCcompression:
             os.makedirs(savedir)
         if self.dodownsample:
             x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
+        pc = np.stack((x_value, y_value, z_value), axis=-1)
+        svd_data = self.__SVD(pc)
+        
         # spilct x_value to frames, each frames has frame_size samples
         x_image = self.__DCTProcess(x_value, "x")
         y_image = self.__DCTProcess(y_value, "y")
@@ -467,9 +514,13 @@ class PCcompression:
         x_readed = self.__IDCTProcess(x_read_image, "x")
         y_readed = self.__IDCTProcess(y_read_image, "y")
         z_readed = self.__IDCTProcess(z_read_image, "z")
+        pc = self.__Reverse_SVD(svd_data)
+        x_readed = pc[:, 0]
+        y_readed = pc[:, 1]
+        z_readed = pc[:, 2]
         if metadata["Downsample"] == 1:
             x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
-
+        
         pc = np.stack((x_readed, y_readed, z_readed), axis=-1)
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(pc)
