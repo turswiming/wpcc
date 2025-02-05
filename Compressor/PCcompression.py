@@ -42,6 +42,7 @@ from bitarray import bitarray
 from scipy.optimize import minimize
 import math
 from Compressor.datatype.SVD import SVD_Data
+from scipy.interpolate import lagrange, CubicSpline
 x_real_original_global = np.array([])
 ununiQuantizeNum = 2
 
@@ -62,8 +63,95 @@ class PCcompression:
         self.tiny = 10000
         pass
 
+    def __polynomial_upsample(self, y_original, upsample_factor):
+        """
+        多项式上采样函数
+        :param x_original: 原始信号的时间点（一维数组）
+        :param y_original: 原始信号的幅值（一维数组）
+        :param upsample_factor: 上采样倍数（整数）
+        :return: 上采样后的时间点和幅值（一维数组）
+        """
+        x = len(y_original)
+        x_original = np.linspace(0, x, x)
+        # 生成上采样后的时间点
+        x_upsampled = np.linspace(x_original[0], x_original[-1], len(x_original) * upsample_factor)
+        
+        # 多项式插值
+        poly = lagrange(x_original, y_original)  # 拉格朗日插值多项式
+        y_upsampled = poly(x_upsampled)          # 计算上采样点的值
+        
+        return y_upsampled
+    
+    def __spline_upsample(self, x_original, y_original, z_original, upsample_factor):
+        """
+        样条插值上采样函数
+        :param x_original: 原始信号的时间点（一维数组）
+        :param y_original: 原始信号的幅值（一维数组）
+        :param upsample_factor: 上采样倍数（整数）
+        :return: 上采样后的时间点和幅值（一维数组）
+        """
+        def detect_jumps(data, threshold):
+            jumps = []
+            derivatives = np.diff(data)
+            for i in range(1, len(derivatives)):
+                if abs(derivatives[i]) > threshold:
+                    jumps.append(i + 1)  # 因为导数数组比原数组少一个元素，所以索引要加1
+            return jumps
 
+        def upsample_segment(x_segment, y_segment, z_segment, upsample_factor):
+            if len(x_segment) < 2:
+                return x_segment, y_segment, z_segment
+            size = len(y_segment)
+            size_original = np.linspace(0, size, size)
+            size_upsampled = np.linspace(size_original[0], size_original[-1], len(size_original) * upsample_factor)
+            
+            spline = CubicSpline(size_original, x_segment)
+            x_upsampled = spline(size_upsampled)
+            spline = CubicSpline(size_original, y_segment)
+            y_upsampled = spline(size_upsampled)
+            spline = CubicSpline(size_original, z_segment)
+            z_upsampled = spline(size_upsampled)
+            #place original points into upsampled points
+            for i in range(1, len(x_upsampled) - 1, 2):
+                x_upsampled[i] = x_segment[i//upsample_factor]
+                y_upsampled[i] = y_segment[i//upsample_factor]
+                z_upsampled[i] = z_segment[i//upsample_factor]
+            
+            return x_upsampled, y_upsampled, z_upsampled
 
+        threshold = 0.5  # 设置跳变检测阈值
+        jumps = detect_jumps(y_original, threshold)
+
+        x_upsampled_total = []
+        y_upsampled_total = []
+        z_upsampled_total = []
+
+        start_idx = 0
+        for jump_idx in jumps:
+            x_segment = x_original[start_idx:jump_idx]
+            y_segment = y_original[start_idx:jump_idx]
+            z_segment = z_original[start_idx:jump_idx]
+            
+            x_upsampled, y_upsampled, z_upsampled = upsample_segment(x_segment, y_segment, z_segment, upsample_factor)
+            
+            x_upsampled_total.extend(x_upsampled)
+            y_upsampled_total.extend(y_upsampled)
+            z_upsampled_total.extend(z_upsampled)
+            
+            start_idx = jump_idx
+
+        # 处理最后一个段
+        x_segment = x_original[start_idx:]
+        y_segment = y_original[start_idx:]
+        z_segment = z_original[start_idx:]
+        
+        x_upsampled, y_upsampled, z_upsampled = upsample_segment(x_segment, y_segment, z_segment, upsample_factor)
+        
+        x_upsampled_total.extend(x_upsampled)
+        y_upsampled_total.extend(y_upsampled)
+        z_upsampled_total.extend(z_upsampled)
+
+        return np.array(x_upsampled_total), np.array(y_upsampled_total), np.array(z_upsampled_total)
     def is_occluded(self,center, points, threshold=0.1,ballsize=0.003):
         print("center: ", center)
         #convert points-conter to polar coordinates
@@ -366,28 +454,24 @@ class PCcompression:
         x_range = np.max(x_value) - np.min(x_value)
         y_range = np.max(y_value) - np.min(y_value)
         z_range = np.max(z_value) - np.min(z_value)
-        max_range = pow(pow(x_range, 2) + pow(y_range, 2) + pow(z_range, 2), 0.5)
-
-
-        nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(original)
-        mse = 0
+        max_range = np.sqrt(x_range**2 + y_range**2 + z_range**2)
+        print("max_range: ", max_range)
+        # Calculate PSNR from original to compressed
+        nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(original)
         _, indices = nbrs.kneighbors(compressed)
-        distances1 = np.zeros((len(indices), 1))
-        for i in range(len(indices)):
-            distances1[i] = np.linalg.norm(original[indices[i][0]] - compressed[i])
-        mse = np.mean(np.square(distances1))
-        psnr1 = 10 * np.log10(pow(max_range, 2) / mse)
+        distances1 = np.linalg.norm(original[indices[:, 0]] - compressed, axis=1)
+        mse1 = np.mean(distances1**2)
+        psnr1 = 10 * np.log10(max_range**2 / mse1)
 
-        nbrs = NearestNeighbors(n_neighbors=2, algorithm='auto').fit(compressed)
-        mse = 0
+        # Calculate PSNR from compressed to original
+        nbrs = NearestNeighbors(n_neighbors=1, algorithm='auto').fit(compressed)
         _, indices = nbrs.kneighbors(original)
-        distances2 = np.zeros((len(indices), 1))
-        for i in range(len(indices)):
-            distances2[i] = np.linalg.norm(compressed[indices[i][0]] - original[i])
-        mse = np.mean(np.square(distances2))
-        psnr2 = 10 * np.log10(pow(max_range, 2) / mse)
-
-        return (psnr1+psnr2)/2 ,distances1
+        distances2 = np.linalg.norm(compressed[indices[:, 0]] - original, axis=1)
+        mse2 = np.mean(distances2**2)
+        psnr2 = 10 * np.log10(max_range**2 / mse2)
+        print("psnr1: ", psnr1)
+        print("psnr2: ", psnr2)
+        return (psnr1 + psnr2) / 2, distances1
 
     def __downsample(self, x, y, z):
         x_down = np.zeros(len(x) // 2)
@@ -512,6 +596,9 @@ class PCcompression:
             os.makedirs(savedir)
         if self.dodownsample:
             x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
+            x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
+            x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
+
         # pc = np.stack((x_value, y_value, z_value), axis=-1)
         # svd_data = self.__SVD(pc)
         
@@ -536,7 +623,9 @@ class PCcompression:
         # y_readed = pc[:, 1]
         # z_readed = pc[:, 2]
         if metadata["Downsample"] == 1:
-            x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
+            x_readed,y_readed,z_readed = self.__spline_upsample(x_readed,y_readed,z_readed, 8)
+
+            # x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)
         
         pc = np.stack((x_readed, y_readed, z_readed), axis=-1)
         pcd = o3d.geometry.PointCloud()

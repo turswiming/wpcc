@@ -24,7 +24,7 @@ usage:
 if __name__ == "__main__":
     frame_sizes = [4,8,16,32,64,128, 256]
     compress_ratios = [1,3,5,7,9,10,15,20,30,40,50]
-    downsamples = [True,False]
+    downsamples = [True]
     # BPP = np.load("BPP.npy")
     # psnrs = np.load("psnrs.npy")
 
@@ -70,8 +70,8 @@ if __name__ == "__main__":
     # plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     # plt.show()
     # plt.close()
-    # pcc = PCcompression(32,10,True, True)
-    # pcc.pc2mp3(path, "./data_output/01_save")
+    pcc = PCcompression(32,5,True, True)
+    pcc.pc2mp3(path, "./data_output/01_save")
 
 
     BPP = np.zeros((len(frame_sizes), len(compress_ratios)))
