@@ -353,27 +353,17 @@ class PCcompression:
         bitmap = bitmap.astype(np.bool)
         return bitmap
 
-
-    def __saveDCTFrames(self, savedir, x_image, y_image, z_image):
-        global combined_image
-        combined_image = np.stack((x_image, y_image, z_image), axis=-1)
-
-        metadata = {}
-
-
-        max_values = np.max(combined_image)
-        min_values = np.min(combined_image)
-
-        combined_image = combined_image / max(abs(max_values), abs(min_values))
-        combined_image = self.__UnuniQuantize(combined_image, ununiQuantizeNum)
-        combined_image = (combined_image + 1) / 2
-        combined_image = (combined_image * 65535)
-        combined_image = combined_image.astype(np.uint16)
-        jp2_filename = "{}/dct_frames_right.jp2".format(savedir)
-        tile_size = (combined_image.shape[0], combined_image.shape[1])
+    def _save_jpeg2000(self, image: np.array, path: str):
+        image = image.astype(np.float64)
+        image = image / 65535
+        image = (image + 1) / 2
+        image = (image * 65535)
+        image = image.astype(np.uint16)
+        jp2_filename = path
+        tile_size = (image.shape[0], image.shape[1])
         jp2 = glymur.Jp2k(
             jp2_filename,
-            data=combined_image,
+            data=image,
             numres=1,
             cratios=(self.compression_value,),
             tilesize=tile_size,
@@ -386,6 +376,19 @@ class PCcompression:
             sop=False,
             tlm=False,
         )
+    def __saveDCTFrames(self, savedir, x_image, y_image, z_image):
+        global combined_image
+        combined_image = np.stack((x_image, y_image, z_image), axis=-1)
+
+        metadata = {}
+
+
+        max_values = np.max(combined_image)
+        min_values = np.min(combined_image)
+
+        combined_image = combined_image / max(abs(max_values), abs(min_values))
+        combined_image = self.__UnuniQuantize(combined_image, ununiQuantizeNum)
+        self._save_jpeg2000(combined_image, "{}/dct_frames_right.jp2".format(savedir))
         metadata["max_values"] = max_values
         metadata["min_values"] = min_values
 
@@ -540,17 +543,61 @@ class PCcompression:
         Ss = Ss / Ss_range
         Vs = Vs / Vs_range
         Us = (Us*128).astype(np.int8).astype(np.float64)/128
-        if self.visualize:
-            print(Ss[0].shape)
-            from Compressor.visualize.show_matrix import show_matrix, show_histogram
-            show_histogram(Vs)
-            showed = Vs
-            matrix = np.zeros((len(showed), showed[0].shape[0]*showed[0].shape[1]))
-            for i in range(len(showed)):
-                matrix[i] = showed[i].reshape(-1)
-            print(matrix.shape)
-            show_matrix(matrix)
+        # if self.visualize:
+        #     print(Ss[0].shape)
+        #     from Compressor.visualize.show_matrix import show_matrix, show_histogram
+        #     show_histogram(Vs)
+        #     showed = Vs
+        #     matrix = np.zeros((len(showed), showed[0].shape[0]*showed[0].shape[1]))
+        #     for i in range(len(showed)):
+        #         matrix[i] = showed[i].reshape(-1)
+        #     print(matrix.shape)
+        #     show_matrix(matrix)
         return SVD_Data(Us, Ss, Vs, Us_range, Ss_range, Vs_range)
+
+    def _save_SVD_Data(self, svd_data:SVD_Data, savedir:str,dodownsample:bool):
+        #convert [A,B,C] to [A,B*C]
+        print("Us: ", svd_data.Us.shape)
+        print("Ss: ", svd_data.Ss.shape)
+        print("Vs: ", svd_data.Vs.shape)
+        Us = svd_data.Us
+        Ss = svd_data.Ss
+        Vs = svd_data.Vs
+        Us = Us.reshape(Us.shape[0], -1)
+        Ss = Ss
+        Vs = Vs.reshape(Vs.shape[0], -1)
+        self._save_jpeg2000(Us, "{}/Us.jp2".format(savedir))
+        self._save_jpeg2000(Ss, "{}/Ss.jp2".format(savedir))
+        self._save_jpeg2000(Vs, "{}/Vs.jp2".format(savedir))
+        metadata = {}
+        metadata["Us_range"] = svd_data.Us_range
+        metadata["Ss_range"] = svd_data.Ss_range
+        metadata["Vs_range"] = svd_data.Vs_range
+        metadata["Downsample"] = 1 if dodownsample else 0
+        with open("{}/svd_metadata.json".format(savedir), "w") as f:
+            json.dump(metadata, f)
+
+    def __read_SVD_Data(self, savedir:str)->tuple[SVD_Data, bool]:
+        with open("{}/svd_metadata.json".format(savedir), "r") as f:
+            metadata = json.load(f)
+        Us = glymur.Jp2k("{}/Us.jp2".format(savedir))[:]
+        Ss = glymur.Jp2k("{}/Ss.jp2".format(savedir))[:]
+        Vs = glymur.Jp2k("{}/Vs.jp2".format(savedir))[:]
+        Us = Us.astype(np.float64)
+        Ss = Ss.astype(np.float64)
+        Vs = Vs.astype(np.float64)
+        Us = Us / 65535
+        Ss = Ss / 65535
+        Vs = Vs / 65535
+        Us = Us * 2 - 1
+        Ss = Ss * 2 - 1
+        Vs = Vs * 2 - 1
+        #from [A,3*2] to [A,3,2]
+        Us = Us.reshape(Us.shape[0], 3, 2)
+        Ss = Ss #do nothing
+        #from [A,2*B] to [A,2,B]
+        Vs = Vs.reshape(Vs.shape[0], 2, -1)
+        return SVD_Data(Us, Ss, Vs, metadata["Us_range"], metadata["Ss_range"], metadata["Vs_range"]), metadata["Downsample"]
 
     def __Reverse_SVD(self, svd_data:SVD_Data)->np.array:
         Us, Ss, Vs,Us_range,Ss_range,Vs_range = svd_data.get()
@@ -572,8 +619,12 @@ class PCcompression:
         pc = pc.transpose() # we need to explain why
         U, S, V = svds(pc, k=2)
         return U, S, V
+    
+    
     def __Reverse_SVD_single(self, U, S, V):
         return np.dot(U, np.dot(np.diag(S), V)).transpose()
+    
+
     def pc2mp3(self, filename, savedir):
 
         pcd = o3d.io.read_point_cloud(filename)
@@ -599,30 +650,35 @@ class PCcompression:
             x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
             x_value, y_value, z_value = self.__downsample(x_value, y_value, z_value)
 
-        # pc = np.stack((x_value, y_value, z_value), axis=-1)
-        # svd_data = self.__SVD(pc)
-        
-        # spilct x_value to frames, each frames has frame_size samples
-        x_image = self.__DCTProcess(x_value, "x")
-        y_image = self.__DCTProcess(y_value, "y")
-        z_image = self.__DCTProcess(z_value, "z")
-        # save DCT frames
-        self.__saveDCTFrames(savedir, x_image, y_image, z_image)
+        pc = np.stack((x_value, y_value, z_value), axis=-1)
+        svd_data = self.__SVD(pc)
+        self._save_SVD_Data(svd_data, savedir,self.dodownsample)
+        # # spilct x_value to frames, each frames has frame_size samples
+        # x_image = self.__DCTProcess(x_value, "x")
+        # y_image = self.__DCTProcess(y_value, "y")
+        # z_image = self.__DCTProcess(z_value, "z")
+        # # save DCT frames
+        # self.__saveDCTFrames(savedir, x_image, y_image, z_image)
         # ---------------------------------------------------------
         # above is saver
 
         # here is reader
         # ---------------------------------------------------------
 
-        x_read_image, y_read_image, z_read_image, metadata = self.__readdata(savedir)
-        x_readed = self.__IDCTProcess(x_read_image, "x")
-        y_readed = self.__IDCTProcess(y_read_image, "y")
-        z_readed = self.__IDCTProcess(z_read_image, "z")
-        # pc = self.__Reverse_SVD(svd_data)
+        # x_read_image, y_read_image, z_read_image, metadata = self.__readdata(savedir)
+        # x_readed = self.__IDCTProcess(x_read_image, "x")
+        # y_readed = self.__IDCTProcess(y_read_image, "y")
+        # z_readed = self.__IDCTProcess(z_read_image, "z")
+        svd_data,downsample = self.__read_SVD_Data(savedir)
+        pc = self.__Reverse_SVD(svd_data)
+        metadata = svd_data
+        x_readed = pc[:, 0]
+        y_readed = pc[:, 1]
+        z_readed = pc[:, 2]
         # x_readed = pc[:, 0]
         # y_readed = pc[:, 1]
         # z_readed = pc[:, 2]
-        if metadata["Downsample"] == 1:
+        if downsample == 1:
             x_readed,y_readed,z_readed = self.__spline_upsample(x_readed,y_readed,z_readed, 8)
 
             # x_readed, y_readed, z_readed = self.__upsample(x_readed, y_readed, z_readed)

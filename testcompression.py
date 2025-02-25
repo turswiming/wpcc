@@ -70,7 +70,7 @@ if __name__ == "__main__":
     # plt.yticks(np.arange(len(frame_sizes)), labels=frame_sizes)
     # plt.show()
     # plt.close()
-    pcc = PCcompression(32,5,True, True)
+    pcc = PCcompression(32,5,False, True)
     pcc.pc2mp3(path, "./data_output/01_save")
 
 
