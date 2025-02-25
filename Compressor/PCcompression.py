@@ -355,7 +355,6 @@ class PCcompression:
 
     def _save_jpeg2000(self, image: np.array, path: str):
         image = image.astype(np.float64)
-        image = image / 65535
         image = (image + 1) / 2
         image = (image * 65535)
         image = image.astype(np.uint16)
@@ -387,7 +386,7 @@ class PCcompression:
         min_values = np.min(combined_image)
 
         combined_image = combined_image / max(abs(max_values), abs(min_values))
-        combined_image = self.__UnuniQuantize(combined_image, ununiQuantizeNum)
+        # combined_image = self.__UnuniQuantize(combined_image, ununiQuantizeNum)
         self._save_jpeg2000(combined_image, "{}/dct_frames_right.jp2".format(savedir))
         metadata["max_values"] = max_values
         metadata["min_values"] = min_values
@@ -529,6 +528,15 @@ class PCcompression:
         Us = np.array(Us)
         Ss = np.array(Ss)
         Vs = np.array(Vs)
+
+        Us = Us.reshape(Us.shape[0], -1)
+        Ss = Ss
+        Vs = Vs.reshape(Vs.shape[0], -1)
+        for i in range(len(Us)):
+            Us[i] = dct(Us[i], norm='ortho')
+
+        for i in range(len(Vs)):
+            Vs[i] = dct(Vs[i], norm='ortho')
         U_max = np.max(Us)
         U_min = np.min(Us)
         S_max = np.max(Ss)
@@ -538,7 +546,6 @@ class PCcompression:
         Us_range = max(abs(U_max), abs(U_min))
         Ss_range = max(abs(S_max), abs(S_min))
         Vs_range = max(abs(V_max), abs(V_min))
-
         Us = Us / Us_range
         Ss = Ss / Ss_range
         Vs = Vs / Vs_range
@@ -556,16 +563,10 @@ class PCcompression:
         return SVD_Data(Us, Ss, Vs, Us_range, Ss_range, Vs_range)
 
     def _save_SVD_Data(self, svd_data:SVD_Data, savedir:str,dodownsample:bool):
-        #convert [A,B,C] to [A,B*C]
-        print("Us: ", svd_data.Us.shape)
-        print("Ss: ", svd_data.Ss.shape)
-        print("Vs: ", svd_data.Vs.shape)
         Us = svd_data.Us
         Ss = svd_data.Ss
         Vs = svd_data.Vs
-        Us = Us.reshape(Us.shape[0], -1)
-        Ss = Ss
-        Vs = Vs.reshape(Vs.shape[0], -1)
+
         self._save_jpeg2000(Us, "{}/Us.jp2".format(savedir))
         self._save_jpeg2000(Ss, "{}/Ss.jp2".format(savedir))
         self._save_jpeg2000(Vs, "{}/Vs.jp2".format(savedir))
@@ -592,11 +593,7 @@ class PCcompression:
         Us = Us * 2 - 1
         Ss = Ss * 2 - 1
         Vs = Vs * 2 - 1
-        #from [A,3*2] to [A,3,2]
-        Us = Us.reshape(Us.shape[0], 3, 2)
-        Ss = Ss #do nothing
-        #from [A,2*B] to [A,2,B]
-        Vs = Vs.reshape(Vs.shape[0], 2, -1)
+
         return SVD_Data(Us, Ss, Vs, metadata["Us_range"], metadata["Ss_range"], metadata["Vs_range"]), metadata["Downsample"]
 
     def __Reverse_SVD(self, svd_data:SVD_Data)->np.array:
@@ -604,6 +601,15 @@ class PCcompression:
         Us = Us * Us_range
         Ss = Ss * Ss_range
         Vs = Vs * Vs_range
+        for i in range(len(Us)):
+            Us[i] = idct(Us[i], norm='ortho')
+        for i in range(len(Vs)):
+            Vs[i] = idct(Vs[i], norm='ortho')
+        #from [A,3*2] to [A,3,2]
+        Us = Us.reshape(Us.shape[0], 3, 2)
+        Ss = Ss #do nothing
+        #from [A,2*B] to [A,2,B]
+        Vs = Vs.reshape(Vs.shape[0], 2, -1)
         pc = np.zeros((len(Us) * self.frame_size, 3))
         for i in range(len(Us)):
             U = Us[i]
@@ -652,6 +658,7 @@ class PCcompression:
 
         pc = np.stack((x_value, y_value, z_value), axis=-1)
         svd_data = self.__SVD(pc)
+        #dct in shape[1]
         self._save_SVD_Data(svd_data, savedir,self.dodownsample)
         # # spilct x_value to frames, each frames has frame_size samples
         # x_image = self.__DCTProcess(x_value, "x")
